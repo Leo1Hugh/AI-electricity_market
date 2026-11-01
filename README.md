@@ -35,8 +35,13 @@ reports/       # 图表、结果和提交说明
 
 - `焕新社区智慧电力专区.pdf`：赛事相关资料，供方案设计和规则确认使用。
 - `data/CAISO/`：CAISO SP15 日前电价公开原始数据及采集清单，详见该目录的说明。
+- `data/raw/caiso/`：CAISO OASIS 返回的原始负荷和风光预测 ZIP；`data/raw/caiso/errors/` 保存官方返回的无数据错误 ZIP。
+- `data/caiso_collection_manifest.jsonl`：每次请求的日期范围、查询地址、获取时间、文件记录数和 SHA-256。
+- `data/caiso_validation_report.md`：全量字段、时间、区域、重复、空值和目标日期覆盖核验报告。
+- `data/caiso_collection_notes.md`：来源、字段口径、DST 处理、缺失范围和发布时间限制。
+- `scripts/caiso_oasis_collect.py`、`scripts/verify_caiso_forecasts.py`：可复查的采集和核验工具。
 
-目前仓库已加入 CAISO 日前电价数据，尚未加入训练代码或可直接运行的 pipeline。待确认赛事数据字段、评测指标和提交格式后，再补充基线与正式实验流程。
+仓库目前已加入 CAISO SP15 日前电价数据，以及负荷和风光预测数据；尚未加入训练代码或可直接运行的预测/交易 pipeline。赛事数据字段、评测指标和提交格式仍需按比赛规则补充基线与正式实验流程。
 
 ## 开发约定
 
