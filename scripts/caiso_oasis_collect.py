@@ -125,6 +125,44 @@ def batches(start: date, end_exclusive: date, batch_days: int):
         cur = nxt
 
 
+def load_manifest(path: Path) -> tuple[list[dict[str, object]], dict[str, dict[str, object]], list[str]]:
+    if not path.exists():
+        return [], {}, []
+    records: list[dict[str, object]] = []
+    by_path: dict[str, dict[str, object]] = {}
+    problems: list[str] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            problems.append(f"manifest line {line_number} is invalid JSON: {exc}")
+            continue
+        file_name = record.get("file")
+        if not isinstance(file_name, str) or not file_name:
+            problems.append(f"manifest line {line_number} has no file path")
+            continue
+        records.append(record)
+        if file_name in by_path:
+            problems.append(f"manifest contains duplicate file path: {file_name}")
+        else:
+            by_path[file_name] = record
+    return records, by_path, problems
+
+
+def manifest_matches(record: dict[str, object], expected: dict[str, object], actual_sha: str,
+                     check_file: bool = True) -> list[str]:
+    fields = ("file", "query_url", "queryname", "market_run_id", "region_parameter",
+              "local_start_date", "local_end_date_exclusive", "utc_start", "utc_end")
+    if not check_file:
+        fields = tuple(field for field in fields if field != "file")
+    problems = [f"manifest field {field} differs" for field in fields if record.get(field) != expected.get(field)]
+    if record.get("sha256") != actual_sha:
+        problems.append("manifest SHA-256 differs from the existing file")
+    return problems
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--start-date", type=date.fromisoformat, default=date(2023, 11, 1))
@@ -135,8 +173,6 @@ def main() -> int:
     p.add_argument("--sample-only", action="store_true")
     p.add_argument("--sample-date", type=date.fromisoformat, default=date(2026, 10, 30))
     p.add_argument("--reports", choices=("all", "load", "renewable"), default="all")
-    p.add_argument("--refresh-existing", action="store_true",
-                   help="attempt a new response for existing paths, but never replace them")
     p.add_argument("--sleep-seconds", type=float, default=1.0)
     p.add_argument("--retries", type=int, default=2)
     p.add_argument("--timeout", type=int, default=120)
@@ -158,9 +194,26 @@ def main() -> int:
         if args.reports in ("all", "renewable"):
             jobs.append(("SLD_REN_FCST", None, start_d, end_d))
 
+    _, manifest_by_path, manifest_problems = load_manifest(args.manifest)
+    manifest_by_query: dict[str, dict[str, object]] = {}
+    for manifest_record in manifest_by_path.values():
+        query = manifest_record.get("query_url")
+        if isinstance(query, str) and query:
+            if query in manifest_by_query:
+                manifest_problems.append(f"manifest contains duplicate query URL: {query}")
+            else:
+                manifest_by_query[query] = manifest_record
+    for file_name in manifest_by_path:
+        if not Path(file_name).exists():
+            manifest_problems.append(f"manifest references missing file: {file_name}")
+    if manifest_problems:
+        for problem in manifest_problems:
+            print(f"ERROR: {problem}", flush=True)
+        return 1
+
     failures = 0
-    with args.manifest.open("a", encoding="utf-8") as mf:
-        for index, (report, region, start_d, end_d) in enumerate(jobs, 1):
+    new_records: list[dict[str, object]] = []
+    for index, (report, region, start_d, end_d) in enumerate(jobs, 1):
             start, end = local_midnight_utc(start_d), local_midnight_utc(end_d)
             url = query_url(report, start, end, **({"region": region} if region else {}))
             stem = f"{report.lower()}_{start_d}_{end_d - timedelta(days=1)}"
@@ -175,21 +228,62 @@ def main() -> int:
                       "utc_start": start.isoformat(), "utc_end": end.isoformat(),
                       "file": str(path), "status": "pending"}
             print(f"[{index}/{len(jobs)}] {url}", flush=True)
-            if path.exists() and not args.refresh_existing:
+            existing_record = manifest_by_path.get(str(path)) or manifest_by_query.get(url)
+            existing_record_path = Path(str(existing_record.get("file"))) if existing_record else path
+            if path.exists():
                 try:
                     members, response_problem = validate_zip(path)
-                    record.update({"status": "skipped_existing",
-                                   "bytes": path.stat().st_size,
-                                   "sha256": sha256(path),
-                                   "zip_members": members})
-                    if response_problem:
-                        failures += 1
-                        record.update({"status": "error", "error": response_problem})
+                    actual_sha = sha256(path)
+                    record.update({"bytes": path.stat().st_size,
+                                   "sha256": actual_sha, "zip_members": members})
+                    if existing_record is not None:
+                        problems = manifest_matches(existing_record, record, actual_sha,
+                                                    check_file=existing_record_path == path)
+                        if response_problem and existing_record.get("status") != "error":
+                            problems.append("manifest status does not describe the existing error response")
+                        if not response_problem and existing_record.get("status") not in {"ok", "skipped_existing"}:
+                            problems.append("manifest status does not describe the existing CSV response")
+                        if problems:
+                            failures += 1
+                            print(f"ERROR: {path}: {'; '.join(problems)}", flush=True)
+                        elif existing_record.get("status") == "error":
+                            failures += 1
+                            print(f"ERROR: {path}: existing manifest record is an unresolved collection error", flush=True)
+                    else:
+                        record.update({"status": "error" if response_problem else "skipped_existing",
+                                       "action": "registered_existing"})
+                        if response_problem:
+                            failures += 1
+                            record["error"] = response_problem
+                        new_records.append(record)
+                        manifest_by_path[str(path)] = record
+                        manifest_by_query[url] = record
                 except Exception as exc:
                     failures += 1
-                    record.update({"status": "error", "error": f"existing file validation failed: {exc}"})
-                mf.write(json.dumps(record, ensure_ascii=False) + "\n")
-                mf.flush()
+                    print(f"ERROR: existing file validation failed for {path}: {exc}", flush=True)
+                time.sleep(args.sleep_seconds)
+                continue
+            if existing_record is not None:
+                if existing_record_path.exists():
+                    try:
+                        members, response_problem = validate_zip(existing_record_path)
+                        actual_sha = sha256(existing_record_path)
+                        problems = manifest_matches(existing_record, record, actual_sha, check_file=False)
+                        if response_problem and existing_record.get("status") != "error":
+                            problems.append("manifest status does not describe the existing error response")
+                        if not response_problem and existing_record.get("status") not in {"ok", "skipped_existing"}:
+                            problems.append("manifest status does not describe the existing CSV response")
+                        if existing_record.get("status") == "error":
+                            problems.append("existing manifest record is an unresolved collection error")
+                        if problems:
+                            failures += 1
+                            print(f"ERROR: {existing_record_path}: {'; '.join(problems)}", flush=True)
+                    except Exception as exc:
+                        failures += 1
+                        print(f"ERROR: existing manifest file validation failed for {existing_record_path}: {exc}", flush=True)
+                else:
+                    failures += 1
+                    print(f"ERROR: manifest references missing target; refusing to download: {path}", flush=True)
                 time.sleep(args.sleep_seconds)
                 continue
             temp_path: Path | None = None
@@ -208,15 +302,20 @@ def main() -> int:
                 if response_problem:
                     failures += 1
                     record["error"] = response_problem
+                new_records.append(record)
+                manifest_by_path[str(path)] = record
+                manifest_by_query[url] = record
             except Exception as exc:
                 failures += 1
-                record.update({"status": "error", "error": str(exc)})
+                print(f"ERROR: {path}: {exc}", flush=True)
             finally:
                 if temp_path is not None:
                     temp_path.unlink(missing_ok=True)
-            mf.write(json.dumps(record, ensure_ascii=False) + "\n")
-            mf.flush()
             time.sleep(args.sleep_seconds)
+    if new_records:
+        with args.manifest.open("a", encoding="utf-8") as mf:
+            for record in new_records:
+                mf.write(json.dumps(record, ensure_ascii=False) + "\n")
     return 1 if failures else 0
 
 

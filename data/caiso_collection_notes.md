@@ -32,6 +32,12 @@ CAISO 文档描述 DAM 预测通常在运行日前一天早间发布，但本次
 
 ## 复核
 
+幂等性回归测试：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python -m unittest -v tests.test_caiso_oasis_collect_idempotency
+```
+
 ```bash
 python scripts/verify_caiso_forecasts.py \
   --root data/raw/caiso \
@@ -43,6 +49,8 @@ python scripts/verify_caiso_forecasts.py \
 
 `data/caiso_collection_manifest.jsonl` 记录每个请求的日期范围、完整查询地址、UTC 获取时间、HTTP 状态、ZIP 文件名、成员记录数和 SHA-256。有效响应与无数据错误响应分目录保存。
 
-采集脚本默认核对并跳过已有 ZIP，不覆盖目标文件。新响应先写入目标目录的临时文件，执行 ZIP 完整性和成员检查后使用不覆盖的原子链接保存；失败时只清理临时文件。`--refresh-existing` 也不会替换已有文件，网络、损坏响应、已有文件校验失败和未保存的请求都会使采集程序返回非零状态。
+采集脚本默认核对并跳过已有 ZIP，不覆盖目标文件。新响应先写入目标目录的临时文件，执行 ZIP 完整性和成员检查后使用不覆盖的原子链接保存；失败时只清理临时文件。网络、损坏响应、已有文件校验失败和未保存的请求都会使采集程序返回非零状态。
+
+重复运行时，已有 ZIP 与 manifest 中的有效记录会被识别后跳过，不会再次追加相同路径；已有 ZIP 但 manifest 没有记录时只补写一条记录。路径重复、manifest 字段或 SHA-256 与文件不一致、以及 manifest 指向缺失文件都会明确报错并返回非零。
 
 核验脚本默认对任何目标序列缺失返回非零；`--allow-known-missing` 只接受本说明列出的三个日期及其 Solar/Wind 两条序列，报告仍保留缺失和原始错误响应。
