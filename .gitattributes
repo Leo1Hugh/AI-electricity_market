@@ -1,0 +1,2 @@
+# Preserve CAISO source-file bytes, including line endings, across checkouts.
+data/CAISO/** -text

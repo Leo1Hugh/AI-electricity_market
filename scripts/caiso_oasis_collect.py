@@ -12,6 +12,9 @@ import csv
 import hashlib
 import io
 import json
+import os
+import re
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -63,23 +66,55 @@ def zip_summary(path: Path) -> list[dict[str, object]]:
     return out
 
 
-def fetch(url: str, path: Path, retries: int, timeout: int) -> tuple[int, str]:
+def response_error(path: Path) -> str | None:
+    """Return a CAISO XML error description, if the ZIP has no CSV response."""
+    with zipfile.ZipFile(path) as zf:
+        for info in zf.infolist():
+            if not info.filename.lower().endswith(".xml"):
+                continue
+            text = zf.read(info).decode("utf-8", errors="replace")
+            code = re.search(r"<m:ERR_CODE>([^<]+)", text)
+            desc = re.search(r"<m:ERR_DESC>([^<]+)", text)
+            if code or desc:
+                return f"CAISO XML error {code.group(1) if code else 'unknown'}: {desc.group(1) if desc else 'unknown'}"
+    return None
+
+
+def validate_zip(path: Path) -> tuple[list[dict[str, object]], str | None]:
+    """Validate ZIP integrity and return CSV metadata plus a response error."""
+    with zipfile.ZipFile(path) as zf:
+        bad_member = zf.testzip()
+        if bad_member:
+            raise ValueError(f"corrupt ZIP member: {bad_member}")
+    members = zip_summary(path)
+    if members:
+        return members, None
+    return [], response_error(path) or "response ZIP contained no CSV member"
+
+
+def fetch_to_temp(url: str, directory: Path, retries: int, timeout: int) -> tuple[int, Path]:
+    """Download to a same-directory temporary file; never touch the final path."""
+    fd, temp_name = tempfile.mkstemp(prefix=".caiso-response-", suffix=".zip", dir=directory)
+    temp_path = Path(temp_name)
+    os.close(fd)
     last: Exception | None = None
-    for attempt in range(retries + 1):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "AI-electricity_market/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                payload = response.read()
-                status = getattr(response, "status", 200)
-            path.write_bytes(payload)
-            return status, "ok"
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            last = exc
-            if attempt < retries:
-                # OASIS can briefly return throttling/5xx responses; retry
-                # with a bounded pause rather than issuing a tight loop.
-                time.sleep(5 * (attempt + 1))
-    raise RuntimeError(f"download failed after {retries + 1} attempts: {last}")
+    try:
+        for attempt in range(retries + 1):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "AI-electricity_market/1.0"})
+                with urllib.request.urlopen(req, timeout=timeout) as response:
+                    payload = response.read()
+                    status = getattr(response, "status", 200)
+                temp_path.write_bytes(payload)
+                return status, temp_path
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                last = exc
+                if attempt < retries:
+                    time.sleep(5 * (attempt + 1))
+        raise RuntimeError(f"download failed after {retries + 1} attempts: {last}")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 def batches(start: date, end_exclusive: date, batch_days: int):
@@ -100,6 +135,8 @@ def main() -> int:
     p.add_argument("--sample-only", action="store_true")
     p.add_argument("--sample-date", type=date.fromisoformat, default=date(2026, 10, 30))
     p.add_argument("--reports", choices=("all", "load", "renewable"), default="all")
+    p.add_argument("--refresh-existing", action="store_true",
+                   help="attempt a new response for existing paths, but never replace them")
     p.add_argument("--sleep-seconds", type=float, default=1.0)
     p.add_argument("--retries", type=int, default=2)
     p.add_argument("--timeout", type=int, default=120)
@@ -121,6 +158,7 @@ def main() -> int:
         if args.reports in ("all", "renewable"):
             jobs.append(("SLD_REN_FCST", None, start_d, end_d))
 
+    failures = 0
     with args.manifest.open("a", encoding="utf-8") as mf:
         for index, (report, region, start_d, end_d) in enumerate(jobs, 1):
             start, end = local_midnight_utc(start_d), local_midnight_utc(end_d)
@@ -137,23 +175,49 @@ def main() -> int:
                       "utc_start": start.isoformat(), "utc_end": end.isoformat(),
                       "file": str(path), "status": "pending"}
             print(f"[{index}/{len(jobs)}] {url}", flush=True)
+            if path.exists() and not args.refresh_existing:
+                try:
+                    members, response_problem = validate_zip(path)
+                    record.update({"status": "skipped_existing",
+                                   "bytes": path.stat().st_size,
+                                   "sha256": sha256(path),
+                                   "zip_members": members})
+                    if response_problem:
+                        failures += 1
+                        record.update({"status": "error", "error": response_problem})
+                except Exception as exc:
+                    failures += 1
+                    record.update({"status": "error", "error": f"existing file validation failed: {exc}"})
+                mf.write(json.dumps(record, ensure_ascii=False) + "\n")
+                mf.flush()
+                time.sleep(args.sleep_seconds)
+                continue
+            temp_path: Path | None = None
             try:
-                status, result = fetch(url, path, args.retries, args.timeout)
-                members = zip_summary(path)
-                record.update({"http_status": status, "status": result,
-                               "bytes": path.stat().st_size, "sha256": sha256(path),
+                status, temp_path = fetch_to_temp(url, path.parent, args.retries, args.timeout)
+                members, response_problem = validate_zip(temp_path)
+                try:
+                    os.link(temp_path, path)
+                except FileExistsError as exc:
+                    raise FileExistsError(f"target already exists; refusing to overwrite: {path}") from exc
+                record.update({"http_status": status,
+                               "status": "ok" if not response_problem else "error",
+                               "bytes": path.stat().st_size,
+                               "sha256": sha256(path),
                                "zip_members": members})
-                if not members:
-                    record.update({"status": "error",
-                                   "error": "response ZIP contained no CSV member; inspect XML error/no-data response"})
+                if response_problem:
+                    failures += 1
+                    record["error"] = response_problem
             except Exception as exc:
+                failures += 1
                 record.update({"status": "error", "error": str(exc)})
-                if path.exists():
-                    path.unlink()
+            finally:
+                if temp_path is not None:
+                    temp_path.unlink(missing_ok=True)
             mf.write(json.dumps(record, ensure_ascii=False) + "\n")
             mf.flush()
             time.sleep(args.sleep_seconds)
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
