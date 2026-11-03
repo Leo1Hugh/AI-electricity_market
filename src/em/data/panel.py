@@ -117,7 +117,7 @@ def build_panel(hourly: pd.DataFrame) -> pd.DataFrame:
     matrices["nl_ramp"] = nl_arr - np.roll(nl_arr, 1, axis=1)
     matrices["nl_daymean"] = _nan_day_stat(netload, "mean")
     matrices["nl_daymax"] = _nan_day_stat(netload, "max")
-    sol_sum = solar.sum(axis=1, skipna=True).to_numpy(dtype=float)
+    sol_sum = solar.sum(axis=1, skipna=True).to_numpy(dtype=float).copy()
     sol_sum[solar.isna().all(axis=1).to_numpy()] = np.nan
     load_mean = load_caiso.mean(axis=1, skipna=True).to_numpy(dtype=float)
     matrices["sol_sum"] = np.repeat(sol_sum[:, None], len(HOURS), axis=1)

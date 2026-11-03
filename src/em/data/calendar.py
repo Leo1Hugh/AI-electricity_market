@@ -87,11 +87,11 @@ def calendar_features(days: pd.DatetimeIndex) -> pd.DataFrame:
     }
     black_friday = {day + pd.Timedelta(days=1) for day in thanksgiving}
 
-    dow = days.weekday.to_numpy(dtype=np.int64)
+    dow = days.day_of_week.to_numpy(dtype=np.int64)
     values: dict[str, np.ndarray] = {
         "dow": dow,
         "month": days.month.to_numpy(dtype=np.int64),
-        "doy": days.dayofyear.to_numpy(dtype=np.int64),
+        "doy": days.day_of_year.to_numpy(dtype=np.int64),
         "is_weekend": (dow >= 5).astype(np.int8),
         "is_holiday": is_holiday,
         "d_to_holiday": d_to_holiday,
