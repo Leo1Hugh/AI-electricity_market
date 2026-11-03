@@ -1,0 +1,43 @@
+name: contract-ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Contract + acceptance tests
+        run: pytest -q
+
+      - name: Build panel (only if W1 merged)
+        run: |
+          if [ -f src/em/data/panel.py ]; then
+            python scripts/build_panel.py --input work/hourly.csv.gz --output data/processed/panel.csv.gz
+          else
+            echo "W1 panel not merged yet; skip"
+          fi

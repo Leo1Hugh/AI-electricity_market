@@ -1,0 +1,46 @@
+# ===== 个人证件 / 报名材料：绝对不入库 =====
+# 本仓库是 public，任何证件、报名表、含个人信息的 PDF/DOCX 都不得提交。
+*身份证*
+*研究生证*
+*.pdf
+!焕新社区智慧电力专区.pdf
+*.docx
+
+# ===== 派生数据 / 过程产物 =====
+data/processed/
+reports/backtests/**/predictions.csv
+reports/backtests/**/*.pkl
+work/crops/
+work/raw_combined/
+work/pdf/
+work/rules_png/
+work/sub_png/
+work/pred_*.csv
+work/*.png
+inbox/
+archive/
+dist/
+
+# ===== 本地已有、无需再入库的大包 =====
+data/raw/caiso/sld_fcst.zip
+data/raw/caiso/sld_ren_fcst.zip
+data/CAISO/CAISO_SP15_DAM_2023-11_to_2026-10_raw_csv.zip
+data/raw/caiso/sld_fcst/*/
+data/raw/caiso/sld_ren_fcst/*/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ===== OS / editor =====
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
