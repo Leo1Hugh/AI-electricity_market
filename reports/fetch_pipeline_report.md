@@ -12,3 +12,14 @@ SLD_REN_FCST 三个 DAM 报表；请求复用现有 collector 的 URL、下载�
 - 网络、损坏 ZIP 或 CAISO no-data 响应返回非零，旧文件保持原字节不变。
 
 真实窗口的 dry-run 输出由验收命令生成；本报告不手写网络响应数量。
+
+## 数据口径修正
+
+W1-R2b 将 hourly 风光列固定为 `TRADING_HUB=SP15` 的 Solar/Wind。旧版
+`work/hourly.csv.gz` 曾因未过滤交易 hub 混入 NP15 值；重建时 legacy 比较门只校验
+`price`、三列负荷和 `ts_utc`，风光独立与 raw SP15 逐元素核对。旧版风光差异保留为
+WARNING，不回写 NP15 数据。
+
+本次重建结果：`work/hourly.csv.gz` 为 26301 行、9 列，SHA-256 为
+`1fd735fc5c92900793cc4457108a6761f4b03b02c7d16f3482702acd4622ccf8`；raw SP15
+Solar/Wind 均为 26229/26229 行精确匹配，3 个春季日期各缺少 hour=3。

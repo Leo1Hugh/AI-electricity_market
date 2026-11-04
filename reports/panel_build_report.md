@@ -6,7 +6,7 @@
 
 ## Input
 
-- SHA-256: `dd5289e35ae6f9ea71ca9d71fd4ff7ac875a7ce1695a48c3b3e115054c8e860a`
+- SHA-256: `1fd735fc5c92900793cc4457108a6761f4b03b02c7d16f3482702acd4622ccf8`
 - Path: `work/hourly.csv.gz`
 
 ## Output summary

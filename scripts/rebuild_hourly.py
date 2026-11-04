@@ -2,8 +2,9 @@
 """Rebuild the compact hourly input table from raw CAISO responses.
 
 The builder reads every source response, keeps the newest version for each
-``(opr_dt, opr_hr)`` series key, and writes a deterministic gzip CSV.  It never
-modifies the checked-in ``work/hourly.csv.gz`` reference file.
+``(opr_dt, opr_hr)`` series key, and writes a deterministic gzip CSV.  The
+reference hourly file can be replaced explicitly by the R2b command after the
+legacy comparison and the independent SP15 source check pass.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ LOAD_COLUMNS = {
     "SDGE-TAC": "load_sdge",
 }
 RENEWABLE_COLUMNS = {"Solar": "ren_solar", "Wind": "ren_wind"}
+LEGACY_COLUMNS = ("ts_utc", "price", "load_caiso", "load_sce", "load_sdge")
 VERSION_RE = re.compile(r"(?<!\d)(\d{8})[_-](\d{2})[_-](\d{2})[_-](\d{2})(?:[_-](\d{2}))?")
 
 
@@ -297,23 +299,10 @@ def _normal_for_compare(frame: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["opr_dt", "opr_hr"], kind="mergesort").reset_index(drop=True)
 
 
-def compare_with_old(frame: pd.DataFrame, old_path: Path) -> dict[str, object]:
-    """Compare the nine output columns to the old table, ignoring hour 25."""
-    if not old_path.exists():
-        return {"available": False, "equal": True, "differences": 0, "message": "old table absent"}
-    old = _normal_for_compare(pd.read_csv(old_path))
-    new = _normal_for_compare(frame)
-    if len(old) != len(new) or not old[["opr_dt", "opr_hr"]].equals(new[["opr_dt", "opr_hr"]]):
-        return {
-            "available": True,
-            "equal": False,
-            "differences": max(len(old), len(new)),
-            "column_differences": {},
-            "message": f"key grid differs: old={len(old)} new={len(new)}",
-        }
-    differences = 0
-    column_differences: dict[str, int] = {}
-    for column in OUTPUT_COLUMNS[2:]:
+def _column_differences(old: pd.DataFrame, new: pd.DataFrame, columns: Iterable[str]) -> dict[str, int]:
+    """Count cell differences for key-aligned columns."""
+    differences: dict[str, int] = {}
+    for column in columns:
         if column == "ts_utc":
             a = pd.to_datetime(old[column], errors="coerce", utc=True).astype("int64").to_numpy()
             b = pd.to_datetime(new[column], errors="coerce", utc=True).astype("int64").to_numpy()
@@ -322,16 +311,77 @@ def compare_with_old(frame: pd.DataFrame, old_path: Path) -> dict[str, object]:
             a = pd.to_numeric(old[column], errors="coerce").to_numpy(dtype=float)
             b = pd.to_numeric(new[column], errors="coerce").to_numpy(dtype=float)
             equal = np.isclose(a, b, rtol=0.0, atol=1e-9, equal_nan=True)
-        count = int((~equal).sum())
-        column_differences[column] = count
-        differences += count
+        differences[column] = int((~equal).sum())
+    return differences
+
+
+def compare_with_old(frame: pd.DataFrame, old_path: Path) -> dict[str, object]:
+    """Compare legacy-compatible columns and report renewable differences.
+
+    The old table is known to contain NP15 renewable values.  Its renewable
+    columns are therefore diagnostic only; the comparison gate covers the
+    five shared legacy columns and leaves the SP15 gate to ``compare_raw_sp15``.
+    """
+    if not old_path.exists():
+        return {
+            "available": False,
+            "equal": True,
+            "legacy_differences": {},
+            "renewable_differences": {},
+            "message": "old table absent",
+        }
+    old = _normal_for_compare(pd.read_csv(old_path))
+    new = _normal_for_compare(frame)
+    if len(old) != len(new) or not old[["opr_dt", "opr_hr"]].equals(new[["opr_dt", "opr_hr"]]):
+        return {
+            "available": True,
+            "equal": False,
+            "legacy_differences": {},
+            "renewable_differences": {},
+            "message": f"key grid differs: old={len(old)} new={len(new)}",
+        }
+    legacy = _column_differences(old, new, LEGACY_COLUMNS)
+    renewable = _column_differences(old, new, tuple(RENEWABLE_COLUMNS.values()))
+    total = sum(legacy.values())
     return {
         "available": True,
-        "equal": differences == 0,
-        "differences": differences,
-        "column_differences": column_differences,
-        "message": "all nine columns match" if differences == 0 else f"{differences} differing cells",
+        "equal": total == 0,
+        "legacy_differences": legacy,
+        "renewable_differences": renewable,
+        "message": "legacy columns match" if total == 0 else f"{total} legacy differing cells",
     }
+
+
+def compare_raw_sp15(frame: pd.DataFrame, raw_root: Path) -> dict[str, object]:
+    """Compare output renewable values with the newest raw SP15 records."""
+    expected, _ = _read_renewables(raw_root)
+    actual_frame = frame.copy()
+    actual_frame["opr_dt"] = pd.to_datetime(actual_frame["opr_dt"], errors="coerce").dt.normalize()
+    results: dict[str, dict[str, int]] = {}
+    all_equal = True
+    for column in RENEWABLE_COLUMNS.values():
+        expected_values = {
+            (key[0], key[1]): float(record[1])
+            for key, record in expected.items()
+            if key[2] == column
+        }
+        actual_values = {
+            (row.opr_dt, int(row.opr_hr)): float(getattr(row, column))
+            for row in actual_frame.loc[actual_frame[column].notna(), ["opr_dt", "opr_hr", column]].itertuples(index=False)
+        }
+        matched = sum(
+            1
+            for key, value in expected_values.items()
+            if key in actual_values and np.isclose(value, actual_values[key], rtol=0.0, atol=1e-9)
+        )
+        exact = matched == len(expected_values) and len(actual_values) == len(expected_values)
+        all_equal &= exact
+        results[column] = {
+            "expected": len(expected_values),
+            "actual": len(actual_values),
+            "matched": matched,
+        }
+    return {"equal": all_equal, "columns": results}
 
 
 def _report(
@@ -340,6 +390,7 @@ def _report(
     counts: dict[str, int],
     output: Path,
     comparison: dict[str, object] | None,
+    raw_sp15: dict[str, object] | None = None,
     error: str | None = None,
 ) -> str:
     """Render the rebuild report."""
@@ -374,13 +425,27 @@ def _report(
             lines.append("- 无非 24 小时日期")
     else:
         lines.append("- 无输出日期")
-    lines += ["", "## 与旧 hourly 的 9 列比较", ""]
+    lines += ["", "## 与旧 hourly 的比较", ""]
     if comparison is None or not comparison.get("available"):
         lines.append("- 未找到旧表，未比较。")
     else:
         lines.append(f"- {'通过' if comparison['equal'] else '失败'}：{comparison['message']}")
-        for column, count in comparison.get("column_differences", {}).items():
-            lines.append(f"- `{column}` 差异单元格：{count}")
+        lines.append("- legacy 门只比较 `ts_utc`、`price`、`load_caiso`、`load_sce`、`load_sdge`。")
+        for column, count in comparison.get("legacy_differences", {}).items():
+            lines.append(f"- legacy `{column}` 差异单元格：{count}")
+        renewable_differences = comparison.get("renewable_differences", {})
+        for column, count in renewable_differences.items():
+            if count:
+                lines.append(f"- WARNING: 旧表 `{column}` 与 SP15 重建差异 {count} 个单元格；旧表风光口径为 NP15。")
+    lines += ["", "## 与 raw SP15 风光比较", ""]
+    if raw_sp15 is None:
+        lines.append("- 未比较。")
+    else:
+        lines.append(f"- {'通过' if raw_sp15['equal'] else '失败'}：逐列精确比较（atol=1e-9）。")
+        for column, values in raw_sp15.get("columns", {}).items():
+            lines.append(
+                f"- `{column}`：raw={values['expected']}，输出={values['actual']}，匹配={values['matched']}"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -395,24 +460,31 @@ def main(argv: list[str] | None = None) -> int:
     old_path = Path("work/hourly.csv.gz")
     report_text: str
     try:
-        if args.out.resolve() == old_path.resolve():
-            raise ValueError("refusing to overwrite work/hourly.csv.gz")
         frame, counts = rebuild(args.raw_root, args.price_root)
         if frame.empty:
             raise ValueError("no target rows found in raw inputs")
-        _write_deterministic(frame, args.out)
+        # Compare before writing when --out points at the legacy reference.
         comparison = compare_with_old(frame, old_path)
+        raw_sp15 = compare_raw_sp15(frame, args.raw_root)
+        _write_deterministic(frame, args.out)
         report_text = _report(
             frame=frame,
             counts=counts,
             output=args.out,
             comparison=comparison,
+            raw_sp15=raw_sp15,
         )
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(report_text, encoding="utf-8")
         print(f"rebuilt {len(frame)} rows; output={args.out}; report={args.report}")
-        if comparison.get("available") and not comparison.get("equal"):
-            print(f"ERROR: old hourly comparison failed: {comparison['message']}")
+        renewable_differences = comparison.get("renewable_differences", {})
+        if any(renewable_differences.values()):
+            print("WARNING: legacy hourly renewable columns are NP15; they are excluded from the failure gate.")
+        if not comparison.get("equal"):
+            print(f"ERROR: legacy comparison failed: {comparison['message']}")
+            return 1
+        if not raw_sp15.get("equal"):
+            print("ERROR: raw SP15 renewable comparison failed")
             return 1
         return 0
     except Exception as exc:
@@ -421,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             counts={},
             output=args.out,
             comparison=None,
+            raw_sp15=None,
             error=str(exc),
         )
         args.report.parent.mkdir(parents=True, exist_ok=True)
