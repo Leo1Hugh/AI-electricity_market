@@ -88,6 +88,15 @@ def test_latest_version_wins_and_hour25_is_dropped(tmp_path: Path):
     assert frame.loc[frame["opr_hr"] == 1, "price"].iloc[0] == 101
     assert "opr_dt" in frame and list(frame.columns) == rebuild_hourly.OUTPUT_COLUMNS
 
+    legacy = frame.copy()
+    legacy["ren_solar"] = legacy["ren_solar"].fillna(0.0) + 1000.0
+    legacy_path = tmp_path / "legacy.csv.gz"
+    legacy.to_csv(legacy_path, index=False, compression="gzip")
+    comparison = rebuild_hourly.compare_with_old(frame, legacy_path)
+    assert comparison["equal"]
+    assert comparison["renewable_differences"]["ren_solar"] > 0
+    assert rebuild_hourly.compare_raw_sp15(frame, raw)["equal"]
+
 
 def test_spring_missing_hour_is_preserved_as_missing_key(tmp_path: Path):
     price_root = tmp_path / "prices"

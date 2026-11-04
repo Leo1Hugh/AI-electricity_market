@@ -1,28 +1,25 @@
 # work/ 说明
 
-本目录是**建模过程的本地工作区**，不是生产代码。
+`hourly.csv.gz` 是 W1 面板构建的契约输入，覆盖 2023-11-01 至
+2026-10-31，共 26301 行、9 列。风光口径固定为 CAISO
+`TRADING_HUB=SP15` 的 Solar/Wind 日前预测；价格来自 PRC_LMP，负荷来自
+CA ISO-TAC、SCE-TAC、SDGE-TAC。
 
-## 会入库的
+列顺序固定为：
 
-- **hourly.csv.gz**：2023-11-01 ～ 2026-10-31 的建模宽表（26304 行）。
-  由 CAISO 价格 + 负荷/风光预测合并而来；W1 的 build_panel 以它为输入。
+```text
+opr_dt, opr_hr, ts_utc, price, load_caiso, load_sce, load_sdge, ren_solar, ren_wind
+```
 
-## 只在本地、不会入库的
+2024-03-10、2025-03-09、2026-03-08 是春季跳时日，原始 hourly 保留实际缺失的
+hour=3 行；panel builder 会按契约补出该行并将 y 置为 NaN。秋季回拨日的
+OPR_HR=25 会在重建时丢弃。
 
-- **raw_combined/**：本地合并的大 ZIP（sld_fcst.zip、sld_ren_fcst.zip）。
-  它们不在 data/raw/caiso 的 manifest 里，放回数据目录会让 verify 测试报异常。
-- **crops/、pdf/、rules_png/、sub_png/**：PDF 截图与中间图。
-- **pred_*.csv、*.png**：回测预测与图，体积大。
-- **旧脚本**：build_dataset.py、model.py、winter_bt2.py、check_mtl.py 等，
-  是 reports/电价预测方案.md 的取证脚本；保留在本机供追溯，不作为新流水线的一部分。
-  新流水线在 src/em/ 与 scripts/。
+旧版 hourly 曾因未按 `TRADING_HUB` 过滤而混入 NP15 风光值；W1-R2b 已按 SP15
+重建。请使用 `scripts/rebuild_hourly.py` 生成，不要把 NP15 或其他 hub 数据混回
+hourly。
 
-## 重建 hourly.csv.gz
+## 本地中间文件
 
-旧脚本依赖本地数据布局；在新环境请优先用：
-
-~~~powershell
-python scripts/caiso_oasis_collect.py --help
-~~~
-
-或直接用仓库里已提交的 work/hourly.csv.gz。不要把 raw_combined/ 放回 data/raw/caiso/。
+`raw_combined/`、`crops/`、`pdf/`、`rules_png/`、`sub_png/` 和回测中间产物只在本地
+使用，不放入 `data/raw/caiso/`。新流水线在 `src/em/` 与 `scripts/`。
