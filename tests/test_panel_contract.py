@@ -72,7 +72,11 @@ def test_netload_identity(panel: pd.DataFrame):
 def test_nl_ramp(panel: pd.DataFrame):
     pivot = _piv(panel, "netload")
     ramp = _piv(panel, "nl_ramp")
-    np.testing.assert_allclose(ramp.iloc[:, 1:].to_numpy(), (pivot.iloc[:, 1:] - pivot.iloc[:, :-1]).to_numpy(), equal_nan=True)
+    np.testing.assert_allclose(
+        ramp.iloc[:, 1:].to_numpy(),
+        pivot.iloc[:, 1:].to_numpy() - pivot.iloc[:, :-1].to_numpy(),
+        equal_nan=True,
+    )
 
 
 def test_dst_spring_missing_hour(panel: pd.DataFrame):
