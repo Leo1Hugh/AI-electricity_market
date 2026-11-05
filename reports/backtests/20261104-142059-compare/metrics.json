@@ -1,0 +1,108 @@
+{
+  "run_id": "20261104-142059-compare",
+  "mode": "annual",
+  "features": [
+    "p_lag1",
+    "p_lag2",
+    "p_lag3",
+    "p_lag4",
+    "p_lag5",
+    "p_lag6",
+    "p_lag7",
+    "p_lagmean7",
+    "p_lagstd7",
+    "p_lag1_prev",
+    "p_lag1_next",
+    "p_lag1_daymean",
+    "p_lag1_daymax",
+    "p_lag1_daymin",
+    "load_caiso",
+    "load_sce",
+    "load_sdge",
+    "solar",
+    "wind",
+    "netload",
+    "nl_ratio",
+    "nl_ramp",
+    "nl_daymean",
+    "nl_daymax",
+    "sol_sum",
+    "sol_ratio",
+    "load_ramp",
+    "dow",
+    "month",
+    "doy",
+    "is_weekend",
+    "is_holiday",
+    "d_to_holiday",
+    "is_thanksgiving",
+    "is_black_friday",
+    "is_pre_holiday",
+    "is_post_holiday"
+  ],
+  "models": {
+    "naive_d1": {
+      "n_days": 365,
+      "mean": 7.246277219976739,
+      "median": 5.8412111054026425,
+      "max": 49.494635525987896,
+      "p90": 13.590054305286438,
+      "crash_days": 10,
+      "crash_rate": 0.0273972602739726
+    },
+    "ridge": {
+      "n_days": 365,
+      "mean": 6.638359118646327,
+      "median": 5.7280993124957105,
+      "max": 45.01003764611708,
+      "p90": 10.232518640445056,
+      "crash_days": 8,
+      "crash_rate": 0.021917808219178082
+    },
+    "lgbm": {
+      "n_days": 365,
+      "mean": 6.770999670355783,
+      "median": 5.351379481608248,
+      "max": 66.30902939648655,
+      "p90": 9.770775974838429,
+      "crash_days": 12,
+      "crash_rate": 0.03287671232876712
+    },
+    "mtlasso": {
+      "n_days": 364,
+      "mean": 7.141241477763367,
+      "median": 6.067972720590491,
+      "max": 30.666037415880684,
+      "p90": 11.936408041881155,
+      "crash_days": 7,
+      "crash_rate": 0.019230769230769232
+    },
+    "mean2": {
+      "n_days": 365,
+      "mean": 6.148731834823555,
+      "median": 5.109946360490512,
+      "max": 43.942762781108144,
+      "p90": 9.425234148405513,
+      "crash_days": 9,
+      "crash_rate": 0.024657534246575342
+    },
+    "mean3": {
+      "n_days": 364,
+      "mean": 5.645601723734489,
+      "median": 4.700623749113998,
+      "max": 38.248401217614,
+      "p90": 8.627958243244832,
+      "crash_days": 7,
+      "crash_rate": 0.019230769230769232
+    },
+    "shrink": {
+      "n_days": 364,
+      "mean": 5.392863918512496,
+      "median": 4.365537168422616,
+      "max": 39.00909010369824,
+      "p90": 8.346786270682482,
+      "crash_days": 6,
+      "crash_rate": 0.016483516483516484
+    }
+  }
+}

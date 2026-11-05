@@ -1,0 +1,175 @@
+{
+  "run_id": "20261104-142150-compare",
+  "mode": "winter",
+  "features": [
+    "p_lag1",
+    "p_lag2",
+    "p_lag3",
+    "p_lag4",
+    "p_lag5",
+    "p_lag6",
+    "p_lag7",
+    "p_lagmean7",
+    "p_lagstd7",
+    "p_lag1_prev",
+    "p_lag1_next",
+    "p_lag1_daymean",
+    "p_lag1_daymax",
+    "p_lag1_daymin",
+    "load_caiso",
+    "load_sce",
+    "load_sdge",
+    "solar",
+    "wind",
+    "netload",
+    "nl_ratio",
+    "nl_ramp",
+    "nl_daymean",
+    "nl_daymax",
+    "sol_sum",
+    "sol_ratio",
+    "load_ramp",
+    "dow",
+    "month",
+    "doy",
+    "is_weekend",
+    "is_holiday",
+    "d_to_holiday",
+    "is_thanksgiving",
+    "is_black_friday",
+    "is_pre_holiday",
+    "is_post_holiday"
+  ],
+  "models": {
+    "2024-11-23..2024-12-06": {
+      "naive_d1": {
+        "n_days": 14,
+        "mean": 7.91151917393776,
+        "median": 6.9825800419495,
+        "max": 22.019802848200733,
+        "p90": 12.87505722113839,
+        "crash_days": 1,
+        "crash_rate": 0.07142857142857142
+      },
+      "ridge": {
+        "n_days": 14,
+        "mean": 5.659995396218641,
+        "median": 4.835356955135026,
+        "max": 10.955189690442356,
+        "p90": 9.826335178230838,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "lgbm": {
+        "n_days": 14,
+        "mean": 4.5907396066266575,
+        "median": 3.8049807292416458,
+        "max": 8.699516278458697,
+        "p90": 7.645488835934347,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "mtlasso": {
+        "n_days": 14,
+        "mean": 7.739817489503378,
+        "median": 6.416945274372106,
+        "max": 13.633037086862958,
+        "p90": 11.804296118215214,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "mean2": {
+        "n_days": 14,
+        "mean": 4.866341641280219,
+        "median": 4.04820981128178,
+        "max": 8.897625523005308,
+        "p90": 7.345999146813828,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "mean3": {
+        "n_days": 14,
+        "mean": 4.320006902137925,
+        "median": 3.706259122303039,
+        "max": 10.302044452125378,
+        "p90": 5.615247838061319,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "shrink": {
+        "n_days": 14,
+        "mean": 4.739085098938617,
+        "median": 3.864806004959502,
+        "max": 10.266288151324316,
+        "p90": 7.870858162071887,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      }
+    },
+    "2025-11-23..2025-12-06": {
+      "naive_d1": {
+        "n_days": 14,
+        "mean": 7.987276876187214,
+        "median": 6.915606217196232,
+        "max": 19.01020291674261,
+        "p90": 14.184843602779162,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "ridge": {
+        "n_days": 14,
+        "mean": 6.359195019876223,
+        "median": 5.617007904984208,
+        "max": 11.84899019601344,
+        "p90": 10.398720089244565,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "lgbm": {
+        "n_days": 14,
+        "mean": 6.68055795899864,
+        "median": 6.373228451479587,
+        "max": 10.520990911697286,
+        "p90": 9.09466420183102,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "mtlasso": {
+        "n_days": 14,
+        "mean": 7.708613139823533,
+        "median": 7.420273470144265,
+        "max": 15.041168301582681,
+        "p90": 11.235379236325542,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "mean2": {
+        "n_days": 14,
+        "mean": 6.197388688850538,
+        "median": 5.561199294950757,
+        "max": 10.141970946193162,
+        "p90": 9.500108490330256,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "mean3": {
+        "n_days": 14,
+        "mean": 6.399296656768529,
+        "median": 6.6032450272045065,
+        "max": 9.599918202864806,
+        "p90": 8.829515923589994,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      },
+      "shrink": {
+        "n_days": 14,
+        "mean": 5.801671363339524,
+        "median": 5.814205858130351,
+        "max": 10.192292905971932,
+        "p90": 8.416521211365204,
+        "crash_days": 0,
+        "crash_rate": 0.0
+      }
+    }
+  }
+}
