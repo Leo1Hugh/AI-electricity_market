@@ -227,10 +227,16 @@ def _window_metric_row(
     status: str = "ok",
 ) -> dict[str, object]:
     """构造窗口级指标行。"""
+    worst_day = ""
     if prediction is None:
         summary = {"n_days": 0, "mean": np.nan, "median": np.nan, "max": np.nan, "p90": np.nan, "crash_days": 0, "crash_rate": np.nan}
     else:
-        summary = daily_metrics(prediction)
+        normalised = _normalise_prediction(prediction, "prediction")
+        daily_values = normalised.groupby("day", sort=True).apply(
+            lambda group: float(np.sqrt(np.mean((group["y"].to_numpy(dtype=float) - group["pred"].to_numpy(dtype=float)) ** 2)))
+        )
+        worst_day = str(pd.Timestamp(daily_values.idxmax()).date())
+        summary = summarize_daily_rmse(daily_values.to_numpy(dtype=float), crash_threshold=CRASH_THRESHOLD)
     return {
         "window": window.label,
         "window_start": window.start,
@@ -239,6 +245,7 @@ def _window_metric_row(
         "status": status,
         "n_days": summary["n_days"],
         "excluded_days": len(excluded_days),
+        "worst_day": worst_day,
         "mean": summary["mean"],
         "median": summary["median"],
         "max": summary["max"],
@@ -531,7 +538,7 @@ def _write_reports(
         max_day = group.loc[group["max"].idxmax()]
         lines.append(
             f"- `{candidate}`：最差窗口 `{worst['window']}` mean={worst['mean']:.6g}；"
-            f"窗口内最大日 RMSE={max_day['max']:.6g}（{max_day['window']}）。"
+            f"窗口内最大日 RMSE={max_day['max']:.6g}（{max_day['worst_day']}，窗口 {max_day['window']}）。"
         )
     lines.extend(["", f"选择候选：`{selected}`（选择规则见模型卡）。", ""])
     report_text = "\n".join(lines)
@@ -539,6 +546,12 @@ def _write_reports(
     report_path.write_text(report_text, encoding="utf-8")
 
     selected_row = summary_ordered.loc[summary_ordered["candidate"] == selected].iloc[0]
+    selected_window_metrics = window_metrics[
+        (window_metrics["candidate"] == selected) & (window_metrics["status"] == "ok")
+    ]
+    selected_worst_day = selected_window_metrics.loc[
+        selected_window_metrics["max"].idxmax(), "worst_day"
+    ]
     card_lines = [
         "# W2-R3 最终模型卡",
         "",
@@ -557,6 +570,7 @@ def _write_reports(
         f"- 窗口数：{int(selected_row['n_windows'])}；窗口 mean 的均值/中位数：{selected_row['window_mean_mean']:.6g} / {selected_row['window_mean_median']:.6g}。",
         f"- 最差窗口 mean：{selected_row['worst_window_mean']:.6g}；窗口 mean p90：{selected_row['window_mean_p90']:.6g}。",
         f"- 单日 max 的最大值/p90：{selected_row['single_day_max']:.6g} / {selected_row['single_day_max_p90']:.6g}。",
+        f"- 最差单日：{selected_worst_day}（RMSE={selected_row['single_day_max']:.6g}）。",
         f"- 崩盘窗口数（窗口内任一天 RMSE > {CRASH_THRESHOLD:g}）：{int(selected_row['crash_windows'])}。",
         "",
         "## 选择理由",
