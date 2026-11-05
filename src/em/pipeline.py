@@ -111,7 +111,9 @@ def _recent_same_hour_mean(train: pd.DataFrame, test: pd.DataFrame) -> np.ndarra
 
 def fallback_naive_prediction(train: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:
     """按 D 日 lag1、七日同小时均值顺序生成最终回退预测。"""
-    values = pd.to_numeric(test["p_lag1"], errors="coerce").to_numpy(dtype=float)
+    values = pd.to_numeric(test["p_lag1"], errors="coerce").to_numpy(
+        dtype=float, copy=True
+    )
     recent = _recent_same_hour_mean(train, test)
     unresolved = ~np.isfinite(values)
     values[unresolved] = recent[unresolved]
