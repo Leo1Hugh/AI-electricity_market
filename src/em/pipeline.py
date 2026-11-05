@@ -122,6 +122,48 @@ def fallback_naive_prediction(train: pd.DataFrame, test: pd.DataFrame) -> np.nda
     return values
 
 
+def naive_only_prediction(
+    panel: pd.DataFrame,
+    as_of: object,
+    *,
+    data_sha256: str | None = None,
+    reason: str | None = None,
+    data_stale: bool = True,
+) -> PipelineResult:
+    """在 D 日面板行缺失时仅用历史价格生成 24 点 naive 预测。"""
+    frame = _normalise_panel(panel)
+    day = pd.Timestamp(as_of).normalize()
+    train = frame[(frame["day"] < day) & frame["y"].notna()].copy()
+    if train.empty:
+        raise ValueError(f"naive-only 没有 D 日之前的历史价格: {day.date()}")
+    latest_day = train["day"].max()
+    lag = train[train["day"] == latest_day].set_index("hour")["y"]
+    recent = _recent_same_hour_mean(train, pd.DataFrame({"hour": list(HOURS)}))
+    prices = pd.Series(list(HOURS), dtype="int64").map(lag).to_numpy(dtype=float, copy=True)
+    missing = ~np.isfinite(prices)
+    prices[missing] = recent[missing]
+    if not np.isfinite(prices).all():
+        raise ValueError("naive-only 无法为 24 个小时生成有限价格")
+    predictions = pd.DataFrame({"day": day, "hour": list(HOURS), "price": prices})
+    validation = validate_predictions(predictions, train=train, as_of=day)
+    if not validation["ok"]:
+        raise ValueError(f"naive-only 校验失败: {validation['errors']}")
+    metadata: dict[str, object] = {
+        "as_of": str(day.date()),
+        "model": FINAL_MODEL,
+        "feature_set": "NAIVE_ONLY",
+        "train_end": str(latest_day.date()),
+        "data_sha256": data_sha256,
+        "fallback": True,
+        "fallback_reason": reason or "naive-only cache fallback",
+        "naive_only": True,
+        "data_stale": bool(data_stale),
+        "component_status": {"naive_only": "ok"},
+        "validation": validation,
+    }
+    return PipelineResult(predictions=predictions, metadata=metadata)
+
+
 def validate_predictions(
     predictions: pd.DataFrame,
     *,
