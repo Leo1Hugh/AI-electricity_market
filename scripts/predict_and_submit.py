@@ -127,13 +127,13 @@ def _cached_panel(path: Path, as_of: pd.Timestamp) -> tuple[pd.DataFrame, bool]:
 
 def _stale_cached_result(
     as_of: pd.Timestamp,
-    refresh_error: Exception,
+    failure_reason: str,
     out_dir: Path,
 ) -> tuple[PipelineResult, Path]:
     """在刷新失败时从缓存面板运行冻结模型或 naive-only。"""
     panel_path = PROCESS_ROOT / "panel_inference.csv.gz"
     panel, has_day = _cached_panel(panel_path, as_of)
-    reason = f"refresh failed: {type(refresh_error).__name__}: {refresh_error}"
+    reason = failure_reason
     digest = sha256(panel_path)
     if has_day:
         result = run_pipeline(panel, as_of, data_sha256=digest)
@@ -165,7 +165,10 @@ def _write_submission(result: PipelineResult, out_dir: Path, panel_path: Path) -
     )
     submission = {
         "day": result.metadata["as_of"],
-        "model": FINAL_MODEL,
+        "model": result.metadata.get("model", FINAL_MODEL),
+        "fallback": bool(result.metadata.get("fallback", False)),
+        "data_stale": bool(result.metadata.get("data_stale", False)),
+        "naive_only": bool(result.metadata.get("naive_only", False)),
         "predictions": result.predictions[["hour", "price"]].to_dict(orient="records"),
     }
     (submission_dir / "submission.json").write_text(
@@ -214,7 +217,11 @@ def main(argv: list[str] | None = None) -> int:
                 result.metadata.setdefault("naive_only", False)
             except Exception as refresh_error:
                 try:
-                    result, panel_path = _stale_cached_result(as_of, refresh_error, _resolve(args.out_dir))
+                    result, panel_path = _stale_cached_result(
+                        as_of,
+                        f"refresh failed: {type(refresh_error).__name__}: {refresh_error}",
+                        _resolve(args.out_dir),
+                    )
                 except Exception as cache_error:
                     # Last attempt: rebuild from the immutable work hourly cache.
                     try:
@@ -234,11 +241,18 @@ def main(argv: list[str] | None = None) -> int:
                             f"work/hourly fallback failed: {work_error}"
                         ) from work_error
         else:
-            _, panel_path = prepare_inputs(as_of, refresh_data=False)
-            panel = load_panel(panel_path)
-            result = run_pipeline(panel, as_of, data_sha256=sha256(panel_path))
-            result.metadata.setdefault("data_stale", False)
-            result.metadata.setdefault("naive_only", False)
+            try:
+                _, panel_path = prepare_inputs(as_of, refresh_data=False)
+                panel = load_panel(panel_path)
+                result = run_pipeline(panel, as_of, data_sha256=sha256(panel_path))
+                result.metadata.setdefault("data_stale", False)
+                result.metadata.setdefault("naive_only", False)
+            except Exception as no_refresh_error:
+                result, panel_path = _stale_cached_result(
+                    as_of,
+                    f"no refresh input failed: {type(no_refresh_error).__name__}: {no_refresh_error}",
+                    _resolve(args.out_dir),
+                )
         submission_dir = _write_submission(result, _resolve(args.out_dir), panel_path)
         print(json.dumps({"submission_dir": str(submission_dir), **result.metadata}, ensure_ascii=False, default=str))
         return 0

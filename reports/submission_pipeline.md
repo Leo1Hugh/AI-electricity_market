@@ -1,6 +1,6 @@
-# W2-R5 提交流水线报告
+# W2-R6 提交流水线报告
 
-基线：`origin/main`（含 W2-R4，W2-R3 已冻结 `shrink3_0.8`）。本轮没有修改基础模型、ensemble、面板构建器或模型卡。
+基线：`origin/main`（含 W2-R4/W2-R5，W2-R3 已冻结 `shrink3_0.8`）。本轮没有修改基础模型、ensemble、面板构建器或模型卡。
 
 ## 模型配置
 
@@ -28,11 +28,13 @@ W2-R4 的两次缓存数据彩排均生成 24 行、hour=1..24、有限价格，
 
 上述 RMSE 仅用于流水线 sanity check，不参与模型选择。`--dry-run` 未创建目录或文件。
 
-W2-R5 新增的取数/重建故障路径全部使用 mock 测试覆盖：
+W2-R5/R6 的取数/重建故障路径全部使用 mock 测试覆盖：
 
 - refresh/fetch 失败且缓存 panel 含 D：仍生成 24 点，metadata 标记 `data_stale=true`、`fallback=true`。
 - rebuild 失败且缓存不含 D：生成 24 点 naive-only，metadata 标记 `naive_only=true`。
 - 缓存和 `work/hourly.csv.gz` 都不可用：返回非零并在 stderr 写明各层失败原因。
+- D 日 27 个非日历特征任一缺失：不拟合模型，直接 `naive_fallback`，metadata 记录缺失列和小时。
+- `naive_only`、`naive_fallback`、`shrink3_0.8` 在 metadata 和 submission.json 中使用真实标签。
 
 ## 输出与失败回退
 
@@ -42,7 +44,13 @@ W2-R5 新增的取数/重建故障路径全部使用 mock 测试覆盖：
 任一 fetch/rebuild、Ridge、LightGBM、MTLasso 或组合步骤失败时，流水线按缓存、work hourly、naive-only 顺序回退；最终结构校验失败也会再次回退。
 metadata 记录 `fallback`、`fallback_reason`、训练截止、数据 SHA-256 和校验结果。范围越界只标记 warning，不裁剪价格。
 
+无 refresh 路径也复用缓存回退：缓存缺 D 日时生成 `naive_only`，缓存和 work hourly 都不可用才退出 1。
+
 ## 已验证结果
 
 `python -m pytest -q tests/test_pipeline.py tests/test_predict_and_submit.py`：8 passed。
-全量 `python -m pytest -q`：74 passed；真实网络 refresh 未运行，缓存路径已用 mock 完成验证。
+全量 `python -m pytest -q`：82 passed。
+
+W2-R6 CLI 彩排 `2026-10-30` 返回 0：24 点、`fallback=false`、`data_stale=false`、`feature_missing` 为空。
+
+未验证项：真实网络 refresh 未在新代码上运行；D 日负荷预测发布时刻由 W1-R5 实测。
