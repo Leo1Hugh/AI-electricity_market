@@ -19,7 +19,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from em.io import load_hourly, load_panel, save_panel  # noqa: E402
-from em.pipeline import FINAL_MODEL, PipelineResult, run_pipeline  # noqa: E402
+from em.pipeline import (  # noqa: E402
+    FINAL_MODEL,
+    PipelineResult,
+    naive_only_prediction,
+    run_pipeline,
+)
 
 
 PROCESS_ROOT = ROOT / "deepseek过程文件" / "05_中间数据"
@@ -110,6 +115,43 @@ def prepare_inputs(as_of: pd.Timestamp, *, refresh_data: bool) -> tuple[Path, Pa
     return hourly_path, panel_path
 
 
+def _cached_panel(path: Path, as_of: pd.Timestamp) -> tuple[pd.DataFrame, bool]:
+    """读取缓存 panel，并判断是否含 D 日完整 24 点。"""
+    if not path.exists():
+        raise FileNotFoundError(f"缓存 panel 不存在: {path}")
+    panel = load_panel(path)
+    day_rows = panel[panel["day"] == as_of]
+    complete = len(day_rows) == 24 and set(day_rows["hour"].astype(int)) == set(range(1, 25))
+    return panel, complete
+
+
+def _stale_cached_result(
+    as_of: pd.Timestamp,
+    refresh_error: Exception,
+    out_dir: Path,
+) -> tuple[PipelineResult, Path]:
+    """在刷新失败时从缓存面板运行冻结模型或 naive-only。"""
+    panel_path = PROCESS_ROOT / "panel_inference.csv.gz"
+    panel, has_day = _cached_panel(panel_path, as_of)
+    reason = f"refresh failed: {type(refresh_error).__name__}: {refresh_error}"
+    digest = sha256(panel_path)
+    if has_day:
+        result = run_pipeline(panel, as_of, data_sha256=digest)
+        result.metadata["data_stale"] = True
+        result.metadata["fallback"] = True
+        result.metadata["fallback_reason"] = reason
+        result.metadata["naive_only"] = False
+        return result, panel_path
+    result = naive_only_prediction(
+        panel,
+        as_of,
+        data_sha256=digest,
+        reason=reason + "; cached panel lacks as_of, naive-only fallback",
+        data_stale=True,
+    )
+    return result, panel_path
+
+
 def _write_submission(result: PipelineResult, out_dir: Path, panel_path: Path) -> Path:
     """写出 predictions.csv、metadata.json 和 submission.json。"""
     submission_dir = out_dir / str(result.metadata["as_of"])
@@ -163,9 +205,40 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     try:
-        hourly_path, panel_path = prepare_inputs(as_of, refresh_data=args.refresh_data)
-        panel = load_panel(panel_path)
-        result = run_pipeline(panel, as_of, data_sha256=sha256(panel_path))
+        if args.refresh_data:
+            try:
+                _, panel_path = prepare_inputs(as_of, refresh_data=True)
+                panel = load_panel(panel_path)
+                result = run_pipeline(panel, as_of, data_sha256=sha256(panel_path))
+                result.metadata.setdefault("data_stale", False)
+                result.metadata.setdefault("naive_only", False)
+            except Exception as refresh_error:
+                try:
+                    result, panel_path = _stale_cached_result(as_of, refresh_error, _resolve(args.out_dir))
+                except Exception as cache_error:
+                    # Last attempt: rebuild from the immutable work hourly cache.
+                    try:
+                        _, panel_path = prepare_inputs(as_of, refresh_data=False)
+                        panel = load_panel(panel_path)
+                        result = run_pipeline(panel, as_of, data_sha256=sha256(panel_path))
+                        result.metadata["data_stale"] = True
+                        result.metadata["fallback"] = True
+                        result.metadata["fallback_reason"] = (
+                            f"refresh failed: {refresh_error}; cache fallback failed: {cache_error}; "
+                            "used work/hourly cache"
+                        )
+                        result.metadata.setdefault("naive_only", False)
+                    except Exception as work_error:
+                        raise RuntimeError(
+                            f"refresh failed: {refresh_error}; cache failed: {cache_error}; "
+                            f"work/hourly fallback failed: {work_error}"
+                        ) from work_error
+        else:
+            _, panel_path = prepare_inputs(as_of, refresh_data=False)
+            panel = load_panel(panel_path)
+            result = run_pipeline(panel, as_of, data_sha256=sha256(panel_path))
+            result.metadata.setdefault("data_stale", False)
+            result.metadata.setdefault("naive_only", False)
         submission_dir = _write_submission(result, _resolve(args.out_dir), panel_path)
         print(json.dumps({"submission_dir": str(submission_dir), **result.metadata}, ensure_ascii=False, default=str))
         return 0
