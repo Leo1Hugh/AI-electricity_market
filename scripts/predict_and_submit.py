@@ -32,6 +32,7 @@ DEFAULT_OUT = PROCESS_ROOT / "submissions"
 RAW_ROOT = ROOT / "data" / "raw" / "caiso"
 PRICE_ROOT = ROOT / "data" / "CAISO"
 MANIFEST = ROOT / "data" / "caiso_collection_manifest.jsonl"
+DAILY_FETCH_DAYS = 30
 
 
 def sha256(path: Path) -> str:
@@ -55,24 +56,27 @@ def _write_hourly_copy(source: Path, target: Path) -> Path:
     return target
 
 
+def _fetch_args(as_of: date) -> list[str]:
+    """构造 daily fetch 参数，覆盖 D-29..D 的完整 30 天窗口。"""
+    return [
+        "--as-of",
+        as_of.isoformat(),
+        "--days",
+        str(DAILY_FETCH_DAYS),
+        "--root",
+        str(RAW_ROOT),
+        "--manifest",
+        str(MANIFEST),
+        "--refresh",
+    ]
+
+
 def _refresh_and_rebuild_hourly(as_of: date, target: Path) -> Path:
     """刷新最近七天并在过程目录重建 hourly。"""
     from scripts.fetch_daily import main as fetch_main
     from scripts.rebuild_hourly import _write_deterministic, rebuild
 
-    code = fetch_main(
-        [
-            "--as-of",
-            as_of.isoformat(),
-            "--days",
-            "7",
-            "--root",
-            str(RAW_ROOT),
-            "--manifest",
-            str(MANIFEST),
-            "--refresh",
-        ]
-    )
+    code = fetch_main(_fetch_args(as_of))
     if code:
         raise RuntimeError(f"daily fetch 失败，退出码 {code}")
     frame, _ = rebuild(RAW_ROOT, PRICE_ROOT)

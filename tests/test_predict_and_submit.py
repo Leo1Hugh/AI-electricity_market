@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+from datetime import date
+
+import pandas as pd
 
 from em.io import save_panel
 from em.testing import make_synthetic_panel
@@ -128,3 +131,30 @@ def test_no_refresh_missing_day_uses_cached_naive_only(tmp_path, monkeypatch) ->
     metadata = json.loads((out_dir / "2024-03-30" / "metadata.json").read_text())
     assert metadata["naive_only"] is True
     assert metadata["model"] == "naive_only"
+
+
+def test_refresh_fetch_uses_30_day_window(tmp_path, monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_fetch(argv):
+        calls.append(list(argv))
+        return 0
+
+    def fake_rebuild(raw_root, price_root):
+        return pd.DataFrame({"opr_dt": ["2026-10-30"], "opr_hr": [1]}), {}
+
+    def fake_write(frame, output):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"hourly")
+
+    import scripts.fetch_daily as fetch_daily
+    import scripts.rebuild_hourly as rebuild_hourly
+
+    monkeypatch.setattr(fetch_daily, "main", fake_fetch)
+    monkeypatch.setattr(rebuild_hourly, "rebuild", fake_rebuild)
+    monkeypatch.setattr(rebuild_hourly, "_write_deterministic", fake_write)
+    target = tmp_path / "hourly_inference.csv.gz"
+    predict_and_submit._refresh_and_rebuild_hourly(date(2026, 10, 30), target)
+    assert calls
+    assert calls[0][calls[0].index("--days") + 1] == "30"
+    assert target.read_bytes() == b"hourly"

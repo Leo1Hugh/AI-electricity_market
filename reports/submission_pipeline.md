@@ -44,13 +44,15 @@ W2-R5/R6 的取数/重建故障路径全部使用 mock 测试覆盖：
 任一 fetch/rebuild、Ridge、LightGBM、MTLasso 或组合步骤失败时，流水线按缓存、work hourly、naive-only 顺序回退；最终结构校验失败也会再次回退。
 metadata 记录 `fallback`、`fallback_reason`、训练截止、数据 SHA-256 和校验结果。范围越界只标记 warning，不裁剪价格。
 
-无 refresh 路径也复用缓存回退：缓存缺 D 日时生成 `naive_only`，缓存和 work hourly 都不可用才退出 1。
+refresh 取数窗口为 30 天（D-29..D），确保 p_lag7 有完整来源并容忍漏跑；依赖 W1-R6 的 rebuild 修复正确读取日更 PRC_LMP。无 refresh 路径也复用缓存回退：缓存缺 D 日时生成 `naive_only`，缓存和 work hourly 都不可用才退出 1。
 
 ## 已验证结果
 
 `python -m pytest -q tests/test_pipeline.py tests/test_predict_and_submit.py`：8 passed。
-全量 `python -m pytest -q`：82 passed。
+全量 `python -m pytest -q`：83 passed。
 
 W2-R6 CLI 彩排 `2026-10-30` 返回 0：24 点、`fallback=false`、`data_stale=false`、`feature_missing` 为空。
 
 未验证项：真实网络 refresh 未在新代码上运行；D 日负荷预测发布时刻由 W1-R5 实测。
+
+W2-R7：refresh fetch 使用 30 天窗口（D-29..D），用于覆盖 p_lag7 并容忍漏跑；该路径依赖 W1-R6 的 rebuild 修复。真实网络 refresh 仍未运行。
