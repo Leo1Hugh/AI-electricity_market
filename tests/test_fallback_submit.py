@@ -76,3 +76,55 @@ def test_dry_run_does_not_write(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert fallback_submit.main(["--as-of", "2026-10-30", "--out-dir", str(out_dir), "--dry-run"]) == 0
     assert "would_write" in capsys.readouterr().out
     assert not out_dir.exists()
+
+
+def _write_hourly(path: Path, latest: str) -> None:
+    rows = []
+    for day in pd.date_range("2026-10-20", latest, freq="D"):
+        for hour in range(1, 25):
+            rows.append({"opr_dt": day.date(), "opr_hr": hour, "price": float(day.day + hour)})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(path, index=False, compression="gzip")
+
+
+def test_default_source_priority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    process_hourly = tmp_path / "process_hourly.csv.gz"
+    process_panel = tmp_path / "process_panel.csv.gz"
+    work_hourly = tmp_path / "work_hourly.csv.gz"
+    _write_hourly(process_hourly, "2026-10-29")
+    _write_hourly(process_panel, "2026-10-28")
+    _write_hourly(work_hourly, "2026-10-27")
+    monkeypatch.setattr(fallback_submit, "DEFAULT_PROCESS_HOURLY", process_hourly)
+    monkeypatch.setattr(fallback_submit, "DEFAULT_PROCESS_PANEL", process_panel)
+    monkeypatch.setattr(fallback_submit, "DEFAULT_HOURLY", work_hourly)
+    _, selected, kind = fallback_submit._read_source(None, None)
+    assert selected == process_hourly
+    assert kind == "hourly"
+
+
+def test_stale_d2_is_allowed_and_marked(tmp_path: Path):
+    hourly = tmp_path / "hourly.csv.gz"
+    _write_hourly(hourly, "2026-10-28")
+    out = tmp_path / "out"
+    assert fallback_submit.main(["--as-of", "2026-10-30", "--hourly", str(hourly), "--out-dir", str(out)]) == 0
+    metadata = json.loads((out / "2026-10-30" / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["source_stale"] is True
+    assert metadata["source_latest_day"] == "2026-10-28"
+
+
+def test_stale_older_than_d2_is_rejected(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    hourly = tmp_path / "hourly.csv.gz"
+    _write_hourly(hourly, "2026-10-27")
+    code = fallback_submit.main(["--as-of", "2026-10-30", "--hourly", str(hourly), "--out-dir", str(tmp_path / "out")])
+    assert code == 2
+    assert "数据陈旧" in capsys.readouterr().err
+
+
+def test_allow_stale_overrides_rejection(tmp_path: Path):
+    hourly = tmp_path / "hourly.csv.gz"
+    _write_hourly(hourly, "2026-10-27")
+    out = tmp_path / "out"
+    assert fallback_submit.main(["--as-of", "2026-10-30", "--hourly", str(hourly), "--out-dir", str(out), "--allow-stale"]) == 0
+    metadata = json.loads((out / "2026-10-30" / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["allow_stale"] is True
+    assert metadata["source_stale"] is True
