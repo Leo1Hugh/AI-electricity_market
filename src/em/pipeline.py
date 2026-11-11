@@ -8,7 +8,7 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from .contracts import BASE_FEATURES, HOURS
+from .contracts import BASE_FEATURES, EXOG_FEATURES, HOURS, PRICE_LAG_FEATURES
 from .ensemble import mean_ensemble, shrink_to_naive
 from .models.lgbm import LGBMModel
 from .models.mtlasso import MultiTaskLassoModel
@@ -122,6 +122,21 @@ def fallback_naive_prediction(train: pd.DataFrame, test: pd.DataFrame) -> np.nda
     return values
 
 
+def _d_feature_missing(test: pd.DataFrame) -> dict[str, list[int]]:
+    """检查 D 日 27 个非日历特征，返回列到缺失小时的映射。"""
+    missing: dict[str, list[int]] = {}
+    for column in (*PRICE_LAG_FEATURES, *EXOG_FEATURES):
+        values = pd.to_numeric(test[column], errors="coerce").to_numpy(dtype=float)
+        hours = [
+            int(hour)
+            for hour, value in zip(test["hour"], values)
+            if not np.isfinite(value)
+        ]
+        if hours:
+            missing[column] = hours
+    return missing
+
+
 def naive_only_prediction(
     panel: pd.DataFrame,
     as_of: object,
@@ -150,7 +165,8 @@ def naive_only_prediction(
         raise ValueError(f"naive-only 校验失败: {validation['errors']}")
     metadata: dict[str, object] = {
         "as_of": str(day.date()),
-        "model": FINAL_MODEL,
+        "model": "naive_only",
+        "base_model": FINAL_MODEL,
         "feature_set": "NAIVE_ONLY",
         "train_end": str(latest_day.date()),
         "data_sha256": data_sha256,
@@ -228,6 +244,32 @@ def run_pipeline(
     if missing_hours:
         fallback_reason.append(f"D 日缺少小时: {missing_hours}")
 
+    feature_missing = _d_feature_missing(test)
+    if feature_missing:
+        prices = fallback_naive_prediction(train, test)
+        predictions = pd.DataFrame(
+            {"day": day, "hour": list(HOURS), "price": np.asarray(prices, dtype=float)}
+        )
+        validation = validate_predictions(predictions, train=train, as_of=day)
+        if not validation["ok"]:
+            raise ValueError(f"D 日特征不完整后的 naive fallback 校验失败: {validation['errors']}")
+        return PipelineResult(
+            predictions=predictions,
+            metadata={
+                "as_of": str(day.date()),
+                "model": "naive_fallback",
+                "base_model": FINAL_MODEL,
+                "feature_set": "BASE_FEATURES",
+                "train_end": str(train["day"].max().date()),
+                "data_sha256": data_sha256,
+                "fallback": True,
+                "fallback_reason": f"D 日特征不完整: {sorted(feature_missing)}",
+                "feature_missing": {"columns": sorted(feature_missing), "hours": feature_missing},
+                "component_status": {"fallback": "naive"},
+                "validation": validation,
+            },
+        )
+
     try:
         if fallback:
             raise ValueError("D 日小时网格不完整")
@@ -284,12 +326,14 @@ def run_pipeline(
 
     metadata: dict[str, object] = {
         "as_of": str(day.date()),
-        "model": FINAL_MODEL,
+        "model": "naive_fallback" if fallback else FINAL_MODEL,
+        "base_model": FINAL_MODEL,
         "feature_set": "BASE_FEATURES",
         "train_end": str(train["day"].max().date()),
         "data_sha256": data_sha256,
         "fallback": bool(fallback),
         "fallback_reason": "; ".join(fallback_reason) if fallback_reason else None,
+        "feature_missing": {"columns": [], "hours": {}},
         "component_status": component_status,
         "validation": validation,
     }

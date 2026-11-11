@@ -68,6 +68,8 @@ def test_refresh_failure_uses_complete_cached_panel(tmp_path, monkeypatch) -> No
     assert metadata["data_stale"] is True
     assert metadata["fallback"] is True
     assert metadata["naive_only"] is False
+    submission = json.loads((out_dir / "2024-03-30" / "submission.json").read_text())
+    assert submission["model"] == "shrink3_0.8"
     assert "refresh failed" in metadata["fallback_reason"]
     assert len((out_dir / "2024-03-30" / "predictions.csv").read_text().splitlines()) == 25
 
@@ -89,6 +91,8 @@ def test_refresh_failure_missing_day_uses_naive_only(tmp_path, monkeypatch) -> N
     assert metadata["data_stale"] is True
     assert metadata["fallback"] is True
     assert metadata["naive_only"] is True
+    submission = json.loads((out_dir / "2024-03-30" / "submission.json").read_text())
+    assert submission["model"] == "naive_only"
     predictions = (out_dir / "2024-03-30" / "predictions.csv").read_text().splitlines()
     assert len(predictions) == 25
 
@@ -106,3 +110,21 @@ def test_refresh_and_cache_failure_returns_nonzero(tmp_path, monkeypatch, capsys
     )
     assert code == 1
     assert "refresh failed" in capsys.readouterr().err
+
+
+def test_no_refresh_missing_day_uses_cached_naive_only(tmp_path, monkeypatch) -> None:
+    process_root, _ = _write_cached_panel(tmp_path, complete=False)
+    monkeypatch.setattr(predict_and_submit, "PROCESS_ROOT", process_root)
+    monkeypatch.setattr(
+        predict_and_submit,
+        "prepare_inputs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("cached panel lacks D")),
+    )
+    out_dir = tmp_path / "submissions"
+    code = predict_and_submit.main(
+        ["--as-of", "2024-03-30", "--out-dir", str(out_dir)]
+    )
+    assert code == 0
+    metadata = json.loads((out_dir / "2024-03-30" / "metadata.json").read_text())
+    assert metadata["naive_only"] is True
+    assert metadata["model"] == "naive_only"
