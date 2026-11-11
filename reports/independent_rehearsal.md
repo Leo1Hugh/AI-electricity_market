@@ -46,13 +46,17 @@ B 管线三次 metadata 均为 `fallback=false`，`train_end` 分别为 2026-10-
 python scripts/check_data_readiness.py --as-of 2026-11-09 --watch --interval 300 --until "2026-11-09T02:10:00+08:00" > deepseek过程文件/04_运行日志/20261108_sldfcst_readiness.jsonl
 ```
 
-独立 `--once` 实测（2026-11-08T06:20:14Z；CA 2026-11-07 22:20:14 PDT；北京
-2026-11-08 14:20:14 CST；退出码 1）结果为 `ready=false`：PRC_LMP 和 SLD_FCST 返回 CAISO
-XML/no-data，SLD_REN_FCST 的 Solar/Wind 均为 24 小时。该结果只说明该时刻，不能
-推断后续发布时间。
+R5b 修正了 PRC_LMP 的 `version=12`/node 查询参数并移除了 `lmp_type`，因此 R5 早先
+把 PRC_LMP 查询 bug 与 SLD_FCST 未发布混在一起的记录已作废。真实复核如下：
 
-`BLOCKED:` 当前会话在目标窗口（北京 2026-11-08 22:00 至 2026-11-09 02:10）开始前，
-无法保持 4 小时现场 watch；没有编造首次 ready 时点。可在仓库根目录直接运行：
+```json
+{"as_of":"2026-11-08","checked_at":"2026-11-11T04:45:56.959146+00:00","exit_code":0,"ready":true,"PRC_LMP_hours":24,"PRC_LMP_latest":"2026-11-07","load_hours":{"CA ISO-TAC":24,"SCE-TAC":24,"SDGE-TAC":24},"renewable_hours":{"Solar":24,"Wind":24}}
+{"as_of":"2026-11-09","checked_at":"2026-11-11T04:57:08.490113+00:00","exit_code":0,"ready":true,"PRC_LMP_hours":24,"PRC_LMP_latest":"2026-11-08","load_hours":{"CA ISO-TAC":24,"SCE-TAC":24,"SDGE-TAC":24},"renewable_hours":{"Solar":24,"Wind":24}}
+```
+
+第一条为 CA 2026-11-10 20:45:56 PST / 北京 2026-11-11 12:45:56，第二条为
+CA 2026-11-10 20:57:08 PST / 北京 2026-11-11 12:57:08。目标窗口的连续 watch
+未在本会话保持运行，未编造首次 ready 时点；现场可运行：
 
 ```text
 python scripts/check_data_readiness.py --as-of 2026-11-09 --watch --interval 300 --until "2026-11-09T02:10:00+08:00" > deepseek过程文件/04_运行日志/20261108_sldfcst_readiness.jsonl

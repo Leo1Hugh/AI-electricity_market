@@ -12,10 +12,10 @@
 
 | 北京时间 | 动作 |
 |---|---|
-| 00:30 | `check_data_readiness.py --as-of D --once`，不跑模型 |
-| 01:00–01:15 | 以现场首次 ready 时刻为准，+5 分钟后执行 refresh 和预测 |
+| 00:30 | `check_data_readiness.py --as-of D --once`，并开始每 3–5 分钟 watch；不跑模型 |
+| 首次 ready + 2 分钟 | 以实测首次 ready 时刻为准，执行 refresh、rebuild、panel 和预测 |
 | 01:25 | 复核 metadata：`fallback`、`feature_missing`、`data_stale`、`model` |
-| 01:35 | 仍 not-ready 或正式模型 fallback 时运行独立 fallback |
+| 01:40 | 仍 not-ready 或正式模型 fallback 时运行独立 fallback |
 | 01:45 | 提交前人工复核并对账 |
 | 02:00 | 截止；保留 JSON、日志和 stderr |
 
@@ -82,13 +82,24 @@ python scripts/fallback_submit.py --as-of YYYY-MM-DD --allow-stale --out-dir dee
 
 ## 现场核验记录
 
-readiness 现场核验目标为 D=2026-11-09。独立一次实测于
-2026-11-08T06:20:14Z（CA 2026-11-07 22:20:14 PDT；北京 2026-11-08 14:20:14 CST；退出码 1）
-返回 `ready=false`：PRC_LMP、SLD_FCST 是 XML/no-data，SLD_REN_FCST Solar/Wind
-各 24 小时。该结果不代表后续发布时间。
+R5b 修正了 PRC_LMP 查询参数：`version=12`、指定 node、无 `lmp_type`。此前的
+PRC_LMP no-data 归因是查询参数 bug；SLD_FCST no-data 才表示负荷尚未发布。
 
-`BLOCKED:` 当前会话无法在目标窗口北京 2026-11-08 22:00–2026-11-09 02:10 持续
-watch，因此没有编造首次 ready 时点。现场值班在仓库根目录运行：
+真实复核记录（均为独立 `--once`，网络响应原样摘要）：
+
+```json
+{"as_of":"2026-11-08","checked_at":"2026-11-11T04:45:56.959146+00:00","exit_code":0,"ready":true,"PRC_LMP":{"hours":24,"latest_opr_dt":"2026-11-07"},"SLD_FCST":{"CA ISO-TAC":24,"SCE-TAC":24,"SDGE-TAC":24},"SLD_REN_FCST":{"Solar":24,"Wind":24}}
+{"as_of":"2026-11-09","checked_at":"2026-11-11T04:57:08.490113+00:00","exit_code":0,"ready":true,"PRC_LMP":{"hours":24,"latest_opr_dt":"2026-11-08"},"SLD_FCST":{"CA ISO-TAC":24,"SCE-TAC":24,"SDGE-TAC":24},"SLD_REN_FCST":{"Solar":24,"Wind":24}}
+```
+
+时间换算：第一条为 CA 2026-11-10 20:45:56 PST / 北京 2026-11-11 12:45:56；
+第二条为 CA 2026-11-10 20:57:08 PST / 北京 2026-11-11 12:57:08。
+
+Lead 的现场时延记录：D=2026-11-10 的 fetch 8.7s、rebuild 11.9s、panel 0.1s、
+预测 21.2s，总计 42s；因此首次 ready 后 +2 分钟足够。另有记录显示 D 日负荷在
+D-1 07:33 CA（北京 23:33）和 08:00 CA 仍不可用，预期约 09:00 CA（北京 01:00）。
+
+目标窗口的连续 watch 未在本会话保持运行，未编造首次 ready 时点。现场值班运行：
 
 ```text
 python scripts/check_data_readiness.py --as-of 2026-11-09 --watch --interval 300 --until "2026-11-09T02:10:00+08:00" > deepseek过程文件/04_运行日志/20261108_sldfcst_readiness.jsonl

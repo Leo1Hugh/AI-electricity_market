@@ -12,7 +12,6 @@ import urllib.error
 import urllib.request
 import zipfile
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 try:
@@ -55,26 +54,30 @@ def _download(url: str, timeout: int = 60) -> bytes:
 
 
 def _rows(payload: bytes) -> list[dict[str, str]]:
-    """解析 ZIP 内所有 CSV 行，并拒绝 XML/no-data 响应。"""
+    """解析 CSV；空 CSV 或只有错误 XML 的响应视为尚无数据。"""
     try:
-        archive = zipfile.ZipFile(io.BytesIO(payload))
-    except zipfile.BadZipFile as exc:
-        raise ReadinessError(f"invalid ZIP response: {exc}") from exc
-    rows: list[dict[str, str]] = []
-    with archive:
-        for info in archive.infolist():
-            if info.is_dir():
-                continue
-            if info.filename.lower().endswith(".xml"):
-                text = archive.read(info).decode("utf-8", errors="replace")
-                if "ERR_CODE" in text or "ERR_DESC" in text:
-                    raise ReadinessError(f"CAISO XML/no-data response in {info.filename}")
-            if info.filename.lower().endswith(".csv"):
-                text = archive.read(info).decode("utf-8-sig", errors="replace")
-                rows.extend(_clean(row) for row in csv.DictReader(io.StringIO(text)))
-    if not rows:
-        raise ReadinessError("response ZIP contained no CSV rows")
-    return rows
+        rows: list[dict[str, str]] = []
+        has_csv = False
+        has_error_xml = False
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            bad_member = archive.testzip()
+            if bad_member:
+                raise ReadinessError(f"corrupt ZIP member: {bad_member}")
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+                if info.filename.lower().endswith(".xml"):
+                    text = archive.read(info).decode("utf-8", errors="strict")
+                    has_error_xml |= "ERR_CODE" in text or "ERR_DESC" in text
+                if info.filename.lower().endswith(".csv"):
+                    has_csv = True
+                    text = archive.read(info).decode("utf-8-sig", errors="strict")
+                    rows.extend(_clean(row) for row in csv.DictReader(io.StringIO(text)))
+        if not has_csv and not has_error_xml:
+            raise ReadinessError("response ZIP contained no CSV or CAISO error XML")
+        return rows
+    except (zipfile.BadZipFile, UnicodeError, csv.Error, OSError) as exc:
+        raise ReadinessError(f"invalid response format: {exc}") from exc
 
 
 def _hours(rows: list[dict[str, str]], *, day: date, predicate) -> tuple[int, str | None]:
@@ -105,7 +108,7 @@ def check_once(as_of: date, *, timeout: int = 60) -> dict[str, object]:
         "PRC_LMP": (
             local_midnight_utc(as_of - timedelta(days=7)),
             local_midnight_utc(as_of),
-            {"node": "TH_SP15_GEN-APND", "lmp_type": "LMP"},
+            {"version": "12", "node": "TH_SP15_GEN-APND"},
         ),
         "SLD_FCST": (
             local_midnight_utc(as_of),
@@ -220,7 +223,16 @@ def main(argv: list[str] | None = None) -> int:
         remaining = max(0.0, (deadline - datetime.now(timezone.utc)).total_seconds())
         if remaining <= 0:
             return 2
-        time.sleep(min(args.interval, remaining, 30.0))
+        # 分段等待仍须满足 interval；不能每 30 秒重新发起一次查询。
+        next_poll = time.monotonic() + min(args.interval, remaining)
+        while True:
+            wait = min(
+                next_poll - time.monotonic(),
+                (deadline - datetime.now(timezone.utc)).total_seconds(),
+            )
+            if wait <= 0:
+                break
+            time.sleep(min(wait, 30.0))
 
 
 if __name__ == "__main__":
