@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -86,3 +87,11 @@ def test_dry_run_does_not_write(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert output.count("https://oasis.caiso.com/oasisapi/SingleZip?") == 3
     assert not root.exists()
     assert not manifest.exists()
+
+
+def test_prc_lmp_uses_version12_without_lmp_type(tmp_path: Path):
+    job = _job(tmp_path)
+    params = parse_qs(urlparse(job.url).query)
+    assert params["version"] == ["12"]
+    assert params["node"] == ["TH_SP15_GEN-APND"]
+    assert "lmp_type" not in params

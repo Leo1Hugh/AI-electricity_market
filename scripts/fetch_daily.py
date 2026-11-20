@@ -80,7 +80,7 @@ def _jobs(as_of: date, days: int, root: Path) -> list[Job]:
         (
             "PRC_LMP",
             "prc_lmp",
-            {"node": "TH_SP15_GEN-APND", "lmp_type": "LMP"},
+            {"node": "TH_SP15_GEN-APND", "version": "12"},
         ),
         ("SLD_FCST", "sld_fcst", {}),
         ("SLD_REN_FCST", "sld_ren_fcst", {}),

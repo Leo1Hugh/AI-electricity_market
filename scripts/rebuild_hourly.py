@@ -146,33 +146,52 @@ def _put_latest(
         records[key] = (rank, value, ts_utc)
 
 
-def _read_prices(price_root: Path) -> tuple[dict[tuple[pd.Timestamp, int, str], tuple], int]:
-    """Read filtered PRC_LMP CSVs into a latest-version record map."""
-    records: dict[tuple[pd.Timestamp, int, str], tuple] = {}
-    files = sorted(price_root.rglob("*.csv"))
-    for path in files:
-        frame = pd.read_csv(path)
-        market = _column(frame, "MARKET_RUN_ID")
-        lmp_type = _column(frame, "LMP_TYPE")
-        node = _column(frame, "NODE", "NODE_ID", "NODE_ID_XML")
-        value_col = _column(frame, "MW", "VALUE")
-        base = _base_fields(frame)
-        if market is None or lmp_type is None or node is None or value_col is None or base.empty:
+def _ingest_price_frame(
+    frame: pd.DataFrame,
+    path: Path,
+    records: dict[tuple[pd.Timestamp, int, str], tuple],
+    member: str = "",
+) -> None:
+    """Ingest one historical or daily PRC_LMP response."""
+    market = _column(frame, "MARKET_RUN_ID")
+    lmp_type = _column(frame, "LMP_TYPE")
+    node = _column(frame, "NODE", "NODE_ID", "NODE_ID_XML")
+    value_col = _column(frame, "MW", "VALUE")
+    base = _base_fields(frame)
+    if market is None or lmp_type is None or node is None or value_col is None or base.empty:
+        return
+    keep = (
+        frame.loc[base.index, market].astype(str).str.strip().eq("DAM")
+        & frame.loc[base.index, lmp_type].astype(str).str.strip().eq("LMP")
+        & frame.loc[base.index, node].astype(str).str.strip().eq("TH_SP15_GEN-APND")
+    )
+    keep &= _hourly_interval_mask(frame, base.index)
+    rank = _source_rank(path, member)
+    for index in base.index[keep]:
+        value = pd.to_numeric(pd.Series([frame.at[index, value_col]]), errors="coerce").iloc[0]
+        if pd.isna(value):
             continue
-        keep = (
-            frame.loc[base.index, market].astype(str).str.strip().eq("DAM")
-            & frame.loc[base.index, lmp_type].astype(str).str.strip().eq("LMP")
-            & frame.loc[base.index, node].astype(str).str.strip().eq("TH_SP15_GEN-APND")
-        )
-        keep &= _hourly_interval_mask(frame, base.index)
-        for index in base.index[keep]:
-            value = pd.to_numeric(pd.Series([frame.at[index, value_col]]), errors="coerce").iloc[0]
-            if pd.isna(value):
-                continue
-            key = (base.at[index, "opr_dt"], int(base.at[index, "opr_hr"]), "price")
-            rank = _source_rank(path)
-            _put_latest(records, key, rank, float(value), base.at[index, "ts_utc"])
-    return records, len(files)
+        key = (base.at[index, "opr_dt"], int(base.at[index, "opr_hr"]), "price")
+        _put_latest(records, key, rank, float(value), base.at[index, "ts_utc"])
+
+
+def _read_prices(
+    price_root: Path,
+    raw_root: Path | None = None,
+) -> tuple[dict[tuple[pd.Timestamp, int, str], tuple], int, int]:
+    """Read historical CSV and daily PRC_LMP ZIP sources."""
+    records: dict[tuple[pd.Timestamp, int, str], tuple] = {}
+    csv_files = sorted(price_root.rglob("*.csv"))
+    for path in csv_files:
+        _ingest_price_frame(pd.read_csv(path), path, records)
+    zip_files: list[Path] = []
+    if raw_root is not None:
+        candidates = [raw_root / "prc_lmp", raw_root / "revisions" / "prc_lmp"]
+        zip_files = sorted({path for directory in candidates if directory.exists() for path in directory.rglob("*.zip")})
+        for path in zip_files:
+            for member, frame in _csv_members(path):
+                _ingest_price_frame(frame, path, records, member)
+    return records, len(csv_files), len(zip_files)
 
 
 def _read_loads(raw_root: Path) -> tuple[dict[tuple[pd.Timestamp, int, str], tuple], int]:
@@ -270,11 +289,11 @@ def _records_to_frame(
 
 def rebuild(raw_root: Path, price_root: Path) -> tuple[pd.DataFrame, dict[str, int]]:
     """Read all raw inputs and return the rebuilt table plus input counts."""
-    price, n_price = _read_prices(price_root)
+    price, n_price, n_price_zip = _read_prices(price_root, raw_root)
     loads, n_load = _read_loads(raw_root)
     renewables, n_renew = _read_renewables(raw_root)
     frame = _records_to_frame(price, loads, renewables)
-    return frame, {"price_csv": n_price, "load_zip": n_load, "renewable_zip": n_renew}
+    return frame, {"price_csv": n_price, "price_zip": n_price_zip, "load_zip": n_load, "renewable_zip": n_renew}
 
 
 def _write_deterministic(frame: pd.DataFrame, output: Path) -> None:
@@ -400,6 +419,7 @@ def _report(
         f"- 生成时间（UTC）：{datetime.now(timezone.utc).isoformat()}",
         f"- 输出：`{output}`",
         f"- 输入价格 CSV：{counts.get('price_csv', 0)}",
+        f"- 输入日更价格 ZIP：{counts.get('price_zip', 0)}",
         f"- 输入负荷 ZIP：{counts.get('load_zip', 0)}",
         f"- 输入风光 ZIP：{counts.get('renewable_zip', 0)}",
     ]

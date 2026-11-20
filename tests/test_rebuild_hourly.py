@@ -83,7 +83,7 @@ def test_latest_version_wins_and_hour25_is_dropped(tmp_path: Path):
     _write_zip(raw / "sld_ren_fcst" / "renew.zip", "renew.csv", _renew_rows(2))
     frame, counts = rebuild_hourly.rebuild(raw, price_root)
 
-    assert counts == {"price_csv": 2, "load_zip": 1, "renewable_zip": 1}
+    assert counts == {"price_csv": 2, "price_zip": 0, "load_zip": 1, "renewable_zip": 1}
     assert set(frame["opr_hr"]) == {1, 2, 3, 4}
     assert frame.loc[frame["opr_hr"] == 1, "price"].iloc[0] == 101
     assert "opr_dt" in frame and list(frame.columns) == rebuild_hourly.OUTPUT_COLUMNS
@@ -134,3 +134,25 @@ def test_deterministic_gzip_bytes(tmp_path: Path):
     rebuild_hourly._write_deterministic(frame, first)
     rebuild_hourly._write_deterministic(frame, second)
     assert first.read_bytes() == second.read_bytes()
+
+
+def test_daily_price_zip_is_read_and_newer_source_wins(tmp_path: Path):
+    price_root = tmp_path / "prices"
+    price_root.mkdir()
+    raw = tmp_path / "raw"
+    _write_zip(raw / "sld_fcst" / "load.zip", "load.csv", _load_rows(7))
+    _write_zip(raw / "sld_ren_fcst" / "renew.zip", "renew.csv", _renew_rows(2))
+    daily_zip = raw / "prc_lmp" / "daily.zip"
+    _write_zip(daily_zip, "price.csv", _price_rows(100))
+
+    frame, counts = rebuild_hourly.rebuild(raw, price_root)
+    assert counts["price_csv"] == 0
+    assert counts["price_zip"] == 1
+    assert frame.loc[frame["opr_hr"] == 1, "price"].iloc[0] == 101
+
+    csv_path = price_root / "historical.csv"
+    pd.DataFrame(_price_rows(10)).to_csv(csv_path, index=False)
+    os.utime(csv_path, (1_000, 1_000))
+    os.utime(daily_zip, (2_000, 2_000))
+    frame, _ = rebuild_hourly.rebuild(raw, price_root)
+    assert frame.loc[frame["opr_hr"] == 1, "price"].iloc[0] == 101
