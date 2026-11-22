@@ -31,10 +31,12 @@ from em.postprocess import (  # noqa: E402
     POSTPROCESS_NAME,
     apply_netload_delta_correction,
 )
+from em.calibration import CORRECTION_NAME, apply_hourly_offset  # noqa: E402
 
 
 PROCESS_ROOT = ROOT / "deepseek过程文件" / "05_中间数据"
 DEFAULT_OUT = PROCESS_ROOT / "submissions"
+CALIBRATION_PATH = DEFAULT_OUT / "calibration.json"
 RAW_ROOT = ROOT / "data" / "raw" / "caiso"
 PRICE_ROOT = ROOT / "data" / "CAISO"
 MANIFEST = ROOT / "data" / "caiso_collection_manifest.jsonl"
@@ -190,6 +192,39 @@ def _apply_postprocess(result: PipelineResult, panel_path: Path) -> PipelineResu
     return result
 
 
+def _apply_midday_calibration(result: PipelineResult) -> PipelineResult:
+    """对冻结模型输出施加中午常数偏移；任何异常都降级为不校正。
+
+    校准表由 scripts/update_calibration.py 维护；模型非冻结或文件缺失时跳过。
+    """
+    if result.metadata.get("model") != FINAL_MODEL:
+        result.metadata["midday_calibration"] = {
+            "name": CORRECTION_NAME,
+            "applied": False,
+            "reason": f"model={result.metadata.get('model')} is not FINAL_MODEL",
+        }
+        return result
+    try:
+        payload = json.loads(CALIBRATION_PATH.read_text(encoding="utf-8"))
+        offset = float(payload.get("offset", 0.0))
+    except Exception as exc:  # noqa: BLE001 —— 校准缺失/损坏必须降级，不能崩提交
+        result.metadata["midday_calibration"] = {
+            "name": CORRECTION_NAME,
+            "applied": False,
+            "reason": f"{type(exc).__name__}: calibration.json unavailable",
+        }
+        return result
+    if offset:
+        result.predictions = apply_hourly_offset(result.predictions, offset)
+    result.metadata["midday_calibration"] = {
+        "name": CORRECTION_NAME,
+        "offset": offset,
+        "applied": bool(offset),
+        **{key: payload.get(key) for key in ("n_days", "mean_resid", "lookback_days")},
+    }
+    return result
+
+
 def _write_submission(result: PipelineResult, out_dir: Path, panel_path: Path) -> Path:
     """写出 predictions.csv、metadata.json 和 submission.json。"""
     submission_dir = out_dir / str(result.metadata["as_of"])
@@ -293,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
         # P1 后处理：Δnetload 修正（仅冻结模型输出；naive 回退不修正；失败降级不修正）
         result = _apply_postprocess(result, panel_path)
+        result = _apply_midday_calibration(result)
         submission_dir = _write_submission(result, _resolve(args.out_dir), panel_path)
         print(json.dumps({"submission_dir": str(submission_dir), **result.metadata}, ensure_ascii=False, default=str))
         return 0
