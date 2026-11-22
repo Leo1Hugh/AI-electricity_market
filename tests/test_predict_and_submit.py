@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
@@ -158,3 +161,43 @@ def test_refresh_fetch_uses_30_day_window(tmp_path, monkeypatch) -> None:
     assert calls
     assert calls[0][calls[0].index("--days") + 1] == "30"
     assert target.read_bytes() == b"hourly"
+
+
+def test_file_invocation_adds_repo_root_to_syspath(tmp_path) -> None:
+    """P0 回归：以 ``python scripts/predict_and_submit.py`` 方式启动（仓库根不在
+    sys.path）时，脚本顶层必须把仓库根加入 sys.path，使 ``from scripts.fetch_daily
+    import main`` / ``from scripts.rebuild_hourly import ...`` 可用，而不是抛
+    ``ModuleNotFoundError`` 后被上层吞成 naive 回退。"""
+    root = Path(predict_and_submit.__file__).resolve().parents[1]
+    script = root / "scripts" / "predict_and_submit.py"
+
+    probe = "\n".join(
+        [
+            "import sys, pathlib, importlib.util",
+            "script = pathlib.Path(sys.argv[1])",
+            "scripts_dir = str(script.parent)",
+            # 复刻文件方式启动：sys.path[0] 是 scripts/，且排除 CWD（仓库根）。
+            "sys.path = [scripts_dir] + [p for p in sys.path if p not in ('', '.', scripts_dir)]",
+            # 以文件方式加载真实脚本（其顶层应把仓库根与 src/ 加进 sys.path）。
+            "spec = importlib.util.spec_from_file_location('predict_and_submit', script)",
+            "module = importlib.util.module_from_spec(spec)",
+            "spec.loader.exec_module(module)",
+            "root = str(script.parent.parent)",
+            "assert root in sys.path, '仓库根未加入 sys.path'",
+            # 文件方式启动下，这两个包导入必须可用（P0 的核心断言）。
+            "import scripts.fetch_daily",
+            "import scripts.rebuild_hourly",
+            "print('P0_OK')",
+        ]
+    )
+
+    proc = subprocess.run(
+        [sys.executable, "-c", probe, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        cwd=str(tmp_path),
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    assert "P0_OK" in proc.stdout
+
