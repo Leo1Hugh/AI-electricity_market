@@ -27,6 +27,10 @@ from em.pipeline import (  # noqa: E402
     naive_only_prediction,
     run_pipeline,
 )
+from em.postprocess import (  # noqa: E402
+    POSTPROCESS_NAME,
+    apply_netload_delta_correction,
+)
 
 
 PROCESS_ROOT = ROOT / "deepseek过程文件" / "05_中间数据"
@@ -158,6 +162,34 @@ def _stale_cached_result(
     return result, panel_path
 
 
+def _apply_postprocess(result: PipelineResult, panel_path: Path) -> PipelineResult:
+    """对冻结模型输出施加 P1 Δnetload 修正；naive/回退输出不修正。
+
+    任何异常都降级为"不修正"（保留原预测），只在 metadata 里记录原因——
+    后处理绝不能导致整个提交失败。
+    """
+    if result.metadata.get("model") != FINAL_MODEL:
+        result.metadata["postprocess"] = {
+            "name": POSTPROCESS_NAME,
+            "applied": False,
+            "reason": f"model={result.metadata.get('model')} 非冻结模型，跳过 P1",
+        }
+        return result
+    try:
+        panel = load_panel(panel_path)
+        adjusted, info = apply_netload_delta_correction(result.predictions, panel)
+    except Exception as exc:  # noqa: BLE001 —— 后处理失败必须降级，不能崩提交
+        result.metadata["postprocess"] = {
+            "name": POSTPROCESS_NAME,
+            "applied": False,
+            "reason": f"P1 后处理异常: {type(exc).__name__}: {exc}",
+        }
+        return result
+    result.predictions = adjusted
+    result.metadata["postprocess"] = {"name": POSTPROCESS_NAME, "applied": True, **info}
+    return result
+
+
 def _write_submission(result: PipelineResult, out_dir: Path, panel_path: Path) -> Path:
     """写出 predictions.csv、metadata.json 和 submission.json。"""
     submission_dir = out_dir / str(result.metadata["as_of"])
@@ -259,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
                     f"no refresh input failed: {type(no_refresh_error).__name__}: {no_refresh_error}",
                     _resolve(args.out_dir),
                 )
+        # P1 后处理：Δnetload 修正（仅冻结模型输出；naive 回退不修正；失败降级不修正）
+        result = _apply_postprocess(result, panel_path)
         submission_dir = _write_submission(result, _resolve(args.out_dir), panel_path)
         print(json.dumps({"submission_dir": str(submission_dir), **result.metadata}, ensure_ascii=False, default=str))
         return 0
