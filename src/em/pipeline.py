@@ -9,14 +9,15 @@ import numpy as np
 import pandas as pd
 
 from .contracts import BASE_FEATURES, EXOG_FEATURES, HOURS, PRICE_LAG_FEATURES
-from .ensemble import mean_ensemble, shrink_to_naive
+from .ensemble import hourly_ensemble
 from .models.lgbm import LGBMModel
 from .models.mtlasso import MultiTaskLassoModel
 from .models.naive import NaiveD1
 from .models.ridge import RidgeModel
+from .weights import TABLE_NAME, build_weight_table
 
 
-FINAL_MODEL = "shrink3_0.8"
+FINAL_MODEL = "shrink3_0.8_hw"
 
 
 @dataclass
@@ -303,8 +304,11 @@ def run_pipeline(
         )
         component_status["naive_d1"] = "ok"
 
-        mean3 = mean_ensemble([ridge_frame, lgbm_frame, mtlasso_frame], name="mean3")
-        final = shrink_to_naive(mean3, naive_frame, weight=0.8, name=FINAL_MODEL)
+        final = hourly_ensemble(
+            [ridge_frame, lgbm_frame, mtlasso_frame, naive_frame],
+            build_weight_table(),
+            name=FINAL_MODEL,
+        )
         prices = final["pred"].to_numpy(dtype=float)
     except Exception as exc:
         fallback = True
@@ -328,6 +332,7 @@ def run_pipeline(
         "as_of": str(day.date()),
         "model": "naive_fallback" if fallback else FINAL_MODEL,
         "base_model": FINAL_MODEL,
+        "weight_table": TABLE_NAME,
         "feature_set": "BASE_FEATURES",
         "train_end": str(train["day"].max().date()),
         "data_sha256": data_sha256,
