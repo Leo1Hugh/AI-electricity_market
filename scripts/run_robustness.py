@@ -23,12 +23,13 @@ if str(_SRC) not in sys.path:
 from em.backtest.harness import BacktestResult, fixed_window, fixed_window_daily  # noqa: E402
 from em.backtest.metrics import summarize_daily_rmse  # noqa: E402
 from em.contracts import BASE_FEATURES, FEATURES, WINTER_WINDOWS  # noqa: E402
-from em.ensemble import mean_ensemble, shrink_to_naive  # noqa: E402
+from em.ensemble import hourly_ensemble, mean_ensemble, shrink_to_naive  # noqa: E402
 from em.io import load_panel  # noqa: E402
 from em.models.lgbm import LGBMModel  # noqa: E402
 from em.models.mtlasso import MultiTaskLassoModel  # noqa: E402
 from em.models.naive import NaiveD1  # noqa: E402
 from em.models.ridge import RidgeModel  # noqa: E402
+from em.weights import build_weight_table  # noqa: E402
 
 
 BASE_START = pd.Timestamp("2024-11-01")
@@ -197,6 +198,9 @@ def build_candidates(
         candidates[f"shrink3_{label}"] = shrink_to_naive(
             candidates["mean3"], naive, weight=float(weight), name=f"shrink3_{label}"
         )
+    candidates["shrink3_0.8_hw"] = hourly_ensemble(
+        [ridge, lgbm, mtlasso, naive], build_weight_table(), name="shrink3_0.8_hw"
+    )
     return candidates
 
 
@@ -323,6 +327,8 @@ def _complexity(candidate: str) -> tuple[int, float]:
         return (2, 0.0)
     if candidate == "mean3":
         return (3, 0.0)
+    if candidate == "shrink3_0.8_hw":
+        return (3, 0.8)
     if candidate.startswith("shrink2_"):
         return (2, float(candidate.split("_", 1)[1]))
     if candidate.startswith("shrink3_"):
@@ -415,7 +421,7 @@ def run_window(
             _window_metric_row(window, name, frame, excluded)
             for name, frame in candidates.items()
         ]
-        for name in ("mtlasso", "mean3", *(f"shrink3_{float(weight):g}" for weight in SHRINK_WEIGHTS)):
+        for name in ("mtlasso", "mean3", "shrink3_0.8_hw", *(f"shrink3_{float(weight):g}" for weight in SHRINK_WEIGHTS)):
             metrics_rows.append(_window_metric_row(window, name, None, excluded, status="未运行"))
         metrics = pd.DataFrame(metrics_rows)
     return WindowRun(window, candidates, metrics, excluded, warnings_count)

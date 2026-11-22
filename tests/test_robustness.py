@@ -70,7 +70,7 @@ def test_build_candidates_contains_weight_grid_and_formula() -> None:
         "shrink2_0.5", "shrink2_0.6", "shrink2_0.7", "shrink2_0.8"
     }
     assert {name for name in candidates if name.startswith("shrink3_")} == {
-        "shrink3_0.5", "shrink3_0.6", "shrink3_0.7", "shrink3_0.8"
+        "shrink3_0.5", "shrink3_0.6", "shrink3_0.7", "shrink3_0.8", "shrink3_0.8_hw"
     }
     np.testing.assert_allclose(candidates["mean2"]["pred"], 5.0)
     np.testing.assert_allclose(candidates["shrink2_0.5"]["pred"], 3.5)

@@ -83,6 +83,41 @@ def mean_ensemble(
     return result.loc[:, _COLUMNS]
 
 
+def hourly_ensemble(
+    predictions: Sequence[pd.DataFrame],
+    weight_table: pd.DataFrame,
+    name: str = "hourly",
+) -> pd.DataFrame:
+    """按小时使用不同权重的加权平均。
+
+    weight_table 行索引必须为 1..24 且不重复，列顺序与 predictions
+    一致；每一行权重之和必须为 1（不做二次归一化，避免静默改变口径）。
+    其余键对齐校验与 mean_ensemble 相同。
+    """
+    frames = _aligned_frames(predictions)
+    table = weight_table.copy()
+    table.index = pd.Index([int(hour) for hour in table.index], name="hour")
+    if not np.array_equal(table.index.to_numpy(dtype=int), np.arange(1, 25)):
+        raise ValueError("weight_table 行索引必须为 1..24 且不重复")
+    matrix = table.loc[list(range(1, 25))].to_numpy(dtype=float)
+    if matrix.shape[1] != len(frames):
+        raise ValueError("weight_table 列数必须与 predictions 一致")
+    if not np.isfinite(matrix).all() or (matrix < 0).any():
+        raise ValueError("权重必须是非负有限数")
+    if not np.allclose(matrix.sum(axis=1), 1.0, atol=1e-9):
+        raise ValueError("每小时权重之和必须为 1")
+    hours = frames[0]["hour"].to_numpy(dtype=int)
+    pred = np.zeros(len(frames[0]), dtype=float)
+    for index, frame in enumerate(frames):
+        pred += matrix[hours - 1, index] * frame["pred"].to_numpy(dtype=float)
+    if not np.isfinite(pred).all():
+        raise ValueError("集成预测含 NaN/inf")
+    result = frames[0].loc[:, ["day", "hour", "y"]].copy()
+    result["pred"] = pred
+    result["model"] = str(name)
+    return result.loc[:, _COLUMNS]
+
+
 def shrink_to_naive(
     pred: pd.DataFrame,
     naive: pd.DataFrame,

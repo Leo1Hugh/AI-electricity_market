@@ -21,7 +21,7 @@ def test_training_cutoff_and_determinism() -> None:
     second = run_pipeline(panel, as_of)
     np.testing.assert_allclose(first.predictions["price"], second.predictions["price"])
     assert first.metadata["train_end"] < str(as_of.date())
-    assert first.metadata["model"] == "shrink3_0.8"
+    assert first.metadata["model"] == pipeline.FINAL_MODEL
     assert len(first.predictions) == 24
     assert np.isfinite(first.predictions["price"]).all()
 
@@ -41,7 +41,7 @@ def test_component_failure_falls_back_to_naive(monkeypatch) -> None:
     assert result.metadata["fallback"] is True
     assert "组件失败" in result.metadata["fallback_reason"]
     assert result.metadata["model"] == "naive_fallback"
-    assert result.metadata["base_model"] == "shrink3_0.8"
+    assert result.metadata["base_model"] == pipeline.FINAL_MODEL
     assert result.metadata["component_status"]["fallback"] == "naive"
     assert len(result.predictions) == 24
     assert np.isfinite(result.predictions["price"]).all()

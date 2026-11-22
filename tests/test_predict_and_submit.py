@@ -44,7 +44,7 @@ def test_cli_smoke_writes_three_submission_files(tmp_path, monkeypatch) -> None:
     assert (submission_dir / "metadata.json").exists()
     assert (submission_dir / "submission.json").exists()
     metadata = json.loads((submission_dir / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata["model"] == "shrink3_0.8"
+    assert metadata["model"] == predict_and_submit.FINAL_MODEL
     assert metadata["validation"]["ok"] is True
 
 
@@ -75,7 +75,7 @@ def test_refresh_failure_uses_complete_cached_panel(tmp_path, monkeypatch) -> No
     assert metadata["fallback"] is True
     assert metadata["naive_only"] is False
     submission = json.loads((out_dir / "2024-03-30" / "submission.json").read_text())
-    assert submission["model"] == "shrink3_0.8"
+    assert submission["model"] == predict_and_submit.FINAL_MODEL
     assert "refresh failed" in metadata["fallback_reason"]
     assert len((out_dir / "2024-03-30" / "predictions.csv").read_text().splitlines()) == 25
 
