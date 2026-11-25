@@ -23,7 +23,9 @@ def _job(tmp_path: Path) -> fetch_daily.Job:
 
 
 def test_refresh_archives_old_and_appends_hashes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    job = _job(tmp_path)
+    monkeypatch.setattr(fetch_daily, "ROOT", tmp_path)
+    raw_root = tmp_path / "data" / "raw" / "caiso"
+    job = _job(raw_root)
     job.path.parent.mkdir(parents=True)
     job.path.write_bytes(b"old-response")
     new_zip = tmp_path / "new.zip"
@@ -41,8 +43,10 @@ def test_refresh_archives_old_and_appends_hashes(tmp_path: Path, monkeypatch: py
     assert record["action"] == "replaced"
     assert record["old_sha256"] == old_digest
     assert record["new_sha256"] == fetch_daily.sha256(job.path)
-    archived = list((tmp_path / "revisions" / "prc_lmp").rglob(job.path.name))
+    archived = list((raw_root / "revisions" / "prc_lmp").rglob(job.path.name))
     assert len(archived) == 1
+    assert record["file"] == job.path.relative_to(tmp_path).as_posix()
+    assert record["archived_file"] == archived[0].relative_to(tmp_path).as_posix()
     assert archived[0].read_bytes() == b"old-response"
     assert job.path.read_bytes() == new_zip.read_bytes()
 

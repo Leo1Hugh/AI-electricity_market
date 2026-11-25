@@ -41,6 +41,15 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by the CLI form.
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 DEFAULT_ROOT = Path("data/raw/caiso")
 DEFAULT_MANIFEST = Path("data/caiso_collection_manifest.jsonl")
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _repo_relative(path: Path) -> Path:
+    """将仓库内的路径转换为相对路径。"""
+    try:
+        return path.resolve().relative_to(ROOT)
+    except ValueError:
+        return path
 
 
 @dataclass(frozen=True)
@@ -144,7 +153,7 @@ def _manifest_record(
         "end": job.end.isoformat(),
         "local_start_date": job.start.isoformat(),
         "local_end_date_exclusive": (job.end + timedelta(days=1)).isoformat(),
-        "file": job.path.as_posix(),
+        "file": _repo_relative(job.path).as_posix(),
         "status": status,
         "http_status": http_status,
         "sha256": digest,
@@ -156,7 +165,7 @@ def _manifest_record(
     if new_digest is not None:
         record["new_sha256"] = new_digest
     if archived_file is not None:
-        record["archived_file"] = archived_file.as_posix()
+        record["archived_file"] = _repo_relative(archived_file).as_posix()
     return record
 
 
