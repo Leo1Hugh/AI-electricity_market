@@ -21,15 +21,22 @@ class CollectorIdempotencyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        shutil.copytree(REPO_ROOT / "data" / "raw" / "caiso", self.root / "raw")
         records = []
+        raw_root = Path("data/raw/caiso")
         source_manifest = REPO_ROOT / "data" / "caiso_collection_manifest.jsonl"
         for line in source_manifest.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                record = json.loads(line)
-                relative = Path(record["file"]).relative_to(Path("data/raw/caiso"))
-                record["file"] = str(self.root / "raw" / relative)
-                records.append(record)
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            # 批量采集记录包含 utc_start，幂等核验截至 2026-10-31。
+            if "utc_start" not in record or record["local_end_date_exclusive"] > "2026-11-01":
+                continue
+            path = Path(record["file"])
+            target = self.root / "raw" / path.relative_to(raw_root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(REPO_ROOT / path, target)
+            record["file"] = str(target)
+            records.append(record)
         self.manifest = self.root / "manifest.jsonl"
         self.manifest.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n", encoding="utf-8")
         self.sample = self.root / "raw" / "sld_fcst" / SAMPLE_NAME
